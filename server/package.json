@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "node --watch --env-file=.env src/index.js",
     "start": "node --env-file=.env src/index.js",
-      "smoke": "node scripts/smoke.js"},
+      "smoke": "node scripts/smoke.js",
+          "voice": "node scripts/voice-check.js"
+    },
   "keywords": [],
   "author": "",
   "license": "ISC",
