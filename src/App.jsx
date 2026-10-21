@@ -2,44 +2,25 @@ import { useState } from 'react'
 import { useAccessibility } from './a11y/context'
 import ProfilePicker from './components/ProfilePicker'
 import AccessibilityPanel from './components/AccessibilityPanel'
-import SafeButton from './components/SafeButton'
+import HomeScreen from './components/HomeScreen'
+
+const SCREENS = {
+  home: HomeScreen,
+  settings: AccessibilityPanel,
+}
 
 export default function App() {
   const { settings } = useAccessibility()
   const [view, setView] = useState('home')
-
-  if (!settings.profile) {
-    return (
-      <div className="app">
-        <ProfilePicker />
-      </div>
-    )
-  }
-
-  if (view === 'settings') {
-    return (
-      <div className="app">
-        <AccessibilityPanel onClose={() => setView('home')} />
-      </div>
-    )
-  }
+  const Screen = SCREENS[view] ?? HomeScreen
 
   return (
     <div className="app">
-      <header className="topbar">
-        <h1 className="brand">
-          Zenith <span>Echo</span>
-        </h1>
-        <SafeButton onPress={() => setView('settings')}>Accessibility</SafeButton>
-      </header>
-      <main>
-        <section className="card" aria-labelledby="balance-label">
-          <p id="balance-label" className="label">
-            Available balance
-          </p>
-          <p className="amount">₦482,500.00</p>
-        </section>
-      </main>
+      {settings.profile ? (
+        <Screen navigate={setView} onClose={() => setView('home')} />
+      ) : (
+        <ProfilePicker />
+      )}
     </div>
   )
 }
