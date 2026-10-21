@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAccessibility } from './a11y/context'
 import ProfilePicker from './components/ProfilePicker'
 import AccessibilityPanel from './components/AccessibilityPanel'
+import SafeButton from './components/SafeButton'
 
 export default function App() {
   const { settings } = useAccessibility()
@@ -29,9 +30,7 @@ export default function App() {
         <h1 className="brand">
           Zenith <span>Echo</span>
         </h1>
-        <button className="control" onClick={() => setView('settings')}>
-          Accessibility
-        </button>
+        <SafeButton onPress={() => setView('settings')}>Accessibility</SafeButton>
       </header>
       <main>
         <section className="card" aria-labelledby="balance-label">
