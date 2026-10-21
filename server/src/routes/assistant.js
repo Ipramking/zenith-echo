@@ -24,7 +24,8 @@ router.post(
 )
 
 router.post('/execute', async (req, res) => {
-  res.json(await execute(req.body?.sessionId))
+  const { sessionId, ticket } = req.body ?? {}
+  res.json(await execute({ sessionId, ticket }))
 })
 
 export default router

@@ -3,6 +3,7 @@ import { formatNaira } from '../banking/parsers.js'
 import { HttpError } from '../errors.js'
 import { buyAirtime, buyData, buyElectricity } from '../services/bills.js'
 import { getAccount } from '../services/ledger.js'
+import { consumeTicket, enabledMethods, voiceLimit } from '../services/security.js'
 import { sendTransfer } from '../services/transfers.js'
 import { FLOWS, SLOT_WORDS } from './flows.js'
 import { detectIntent, groupDigits, isCommand, toSpeech } from './language.js'
@@ -32,6 +33,7 @@ function blankSession(id = randomUUID()) {
     step: null,
     options: null,
     action: null,
+    authorisation: null,
     receipt: null,
     message: { text: 'Hello. What would you like to do today?', tone: 'info' },
     updatedAt: Date.now(),
@@ -118,6 +120,7 @@ async function startFlow(session, intent, text = '') {
   session.intent = intent
   session.slots = {}
   session.action = null
+  session.authorisation = null
   session.receipt = null
   const notes = [`You're on the ${flow.title.toLowerCase()} screen.`]
 
@@ -269,9 +272,7 @@ export async function handle(input) {
 
   if (session.status === 'confirming') {
     if (isCommand(text, 'yes') && !findCorrection(session, text)) {
-      session.status = 'authorising'
-      session.action = flow.action(session.slots)
-      say(session, 'Please confirm with your fingerprint, or enter your PIN.', 'info')
+      requestAuthorisation(session, flow.action(session.slots))
       return respond(session)
     }
     const lower = text.toLowerCase()
@@ -324,12 +325,32 @@ function receiptMessage(type, receipt) {
   return `Payment successful. Your token is ${receipt.token}. That is ${receipt.units} kWh.`
 }
 
-export async function execute(sessionId) {
+function requestAuthorisation(session, action) {
+  const methods = enabledMethods()
+  const limit = voiceLimit()
+  const required = action.amount > limit || !methods.biometric ? 'pin' : 'any'
+  session.status = 'authorising'
+  session.action = action
+  session.authorisation = { required, methods, limit }
+
+  if (!methods.pin && !methods.biometric) {
+    say(session, 'You need to create a PIN before you can pay. Please set one up in Settings.', 'warning')
+  } else if (action.amount > limit) {
+    say(session, `Because this is above ${formatNaira(limit)}, please enter your PIN.`, 'info')
+  } else if (required === 'pin') {
+    say(session, 'Please enter your PIN to confirm.', 'info')
+  } else {
+    say(session, 'Please confirm with your fingerprint, or enter your PIN.', 'info')
+  }
+}
+
+export async function execute({ sessionId, ticket }) {
   const session = sessions.get(sessionId)
   if (!session) throw new HttpError(404, 'Session expired. Please start again.')
   if (session.status !== 'authorising' || !session.action) {
     throw new HttpError(409, 'Nothing is waiting for authorisation')
   }
+  consumeTicket({ ticket, sessionId, requiredMethod: session.authorisation?.required })
   session.updatedAt = Date.now()
   const { type, body } = session.action
   try {
@@ -337,12 +358,14 @@ export async function execute(sessionId) {
     session.receipt = { type, ...receipt }
     session.status = 'done'
     session.action = null
+    session.authorisation = null
     say(session, `${receiptMessage(type, receipt)} Your new balance is ${formatNaira(receipt.balanceAfter)}.`, 'success', {
       sensitive: true,
     })
   } catch (error) {
     session.status = 'confirming'
     session.action = null
+    session.authorisation = null
     say(session, `That didn't go through: ${error.expose ? error.message : 'something went wrong'}. Nothing was sent.`, 'error')
   }
   return respond(session)
@@ -370,6 +393,7 @@ export function respond(session) {
       : [],
     options: session.options?.map(({ id, label }) => ({ id, label })) ?? null,
     action: session.status === 'authorising' ? session.action : null,
+    authorisation: session.status === 'authorising' ? session.authorisation : null,
     receipt: session.receipt,
     message: { text, speech: toSpeech(text), tone, sensitive },
   }

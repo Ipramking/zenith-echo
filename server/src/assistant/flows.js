@@ -167,7 +167,11 @@ export const FLOWS = {
     ],
     summary: (s, d) =>
       `You are sending ${d.amount} to ${s.name}, account ${d.account} at ${d.bank}${s.note ? `, note: ${s.note}` : ''}.`,
-    action: (s) => ({ type: 'transfer', body: { account: s.account, bankId: s.bank, amount: s.amount, note: s.note } }),
+    action: (s) => ({
+      type: 'transfer',
+      amount: s.amount,
+      body: { account: s.account, bankId: s.bank, amount: s.amount, note: s.note },
+    }),
   },
 
   airtime: {
@@ -175,7 +179,11 @@ export const FLOWS = {
     screen: 'airtime',
     slots: [phoneSlot(), networkSlot(), amountSlot({ min: 50, max: 50000, question: 'How much airtime?' })],
     summary: (s, d) => `You are buying ${d.amount} ${d.network} airtime for ${d.phone}.`,
-    action: (s) => ({ type: 'airtime', body: { phone: s.phone, networkId: s.network, amount: s.amount } }),
+    action: (s) => ({
+      type: 'airtime',
+      amount: s.amount,
+      body: { phone: s.phone, networkId: s.network, amount: s.amount },
+    }),
   },
 
   data: {
@@ -214,7 +222,11 @@ export const FLOWS = {
       const plan = DATA_PLANS.find((p) => p.id === s.plan)
       return `You are buying ${plan.label} at ${formatNaira(plan.price)} on ${d.network} for ${d.phone}.`
     },
-    action: (s) => ({ type: 'data', body: { phone: s.phone, planId: s.plan } }),
+    action: (s) => ({
+      type: 'data',
+      amount: DATA_PLANS.find((p) => p.id === s.plan).price,
+      body: { phone: s.phone, planId: s.plan },
+    }),
   },
 
   electricity: {
@@ -262,7 +274,11 @@ export const FLOWS = {
       amountSlot({ min: 1000, max: 500000, question: 'How much electricity do you want to buy?' }),
     ],
     summary: (s, d) => `You are paying ${d.amount} for ${d.disco} prepaid meter ${d.meter}, owned by ${s.customer}.`,
-    action: (s) => ({ type: 'electricity', body: { meter: s.meter, discoId: s.disco, amount: s.amount } }),
+    action: (s) => ({
+      type: 'electricity',
+      amount: s.amount,
+      body: { meter: s.meter, discoId: s.disco, amount: s.amount },
+    }),
   },
 }
 
