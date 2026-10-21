@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "node --watch --env-file=.env src/index.js",
+      "dev": "node --watch --watch-preserve-output --env-file=.env src/index.js",
     "start": "node --env-file=.env src/index.js",
       "smoke": "node scripts/smoke.js",
-          "voice": "node scripts/voice-check.js"
+          "voice": "node scripts/voice-check.js",
+              "assistant": "node scripts/assistant-check.js"
     },
   "keywords": [],
   "author": "",

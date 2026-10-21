@@ -3,6 +3,7 @@ import cors from 'cors'
 import accountRoutes from './routes/account.js'
 import billRoutes from './routes/bills.js'
 import voiceRoutes from './routes/voice.js'
+import assistantRoutes from './routes/assistant.js'
 
 const app = express()
 const port = Number(process.env.PORT) || 4000
@@ -20,6 +21,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api', accountRoutes)
 app.use('/api/bills', billRoutes)
 app.use('/api/voice', voiceRoutes)
+app.use('/api/assistant', assistantRoutes)
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' })
 })
