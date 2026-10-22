@@ -38,7 +38,29 @@ export function findBanks(text) {
     )
     return { bank, score: best }
   }).filter((entry) => entry.score > 0)
-  if (scored.length === 0) return []
+  if (scored.length === 0) return closeBanks(spoken)
   const top = Math.max(...scored.map((entry) => entry.score))
   return scored.filter((entry) => entry.score === top).map((entry) => entry.bank)
+}
+
+function distance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i += 1) {
+    let previous = row[0]
+    row[0] = i
+    for (let j = 1; j <= b.length; j += 1) {
+      const current = row[j]
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1))
+      previous = current
+    }
+  }
+  return row[b.length]
+}
+
+function closeBanks(spoken) {
+  const words = spoken.trim().split(' ').filter((word) => word.length >= 4 && word !== 'bank')
+  const matches = BANKS.filter((bank) =>
+    bank.aliases.some((alias) => alias.length >= 4 && words.some((word) => distance(word, alias) <= 1)),
+  )
+  return matches.length === 1 ? matches : []
 }

@@ -24,6 +24,7 @@ function phoneSlot() {
     key: 'phone',
     label: 'Phone number',
     ask: () => "Which phone number? Say the 11 digits, or say 'my number'.",
+    hint: "I need an 11-digit phone number that starts with zero, or you can say 'my number'.",
     display: (value) => groupDigits(value),
     parse: (text) => {
       if (ownPhone(text)) return { value: getAccount().owner.phone }
@@ -43,6 +44,7 @@ function networkSlot() {
     key: 'network',
     label: 'Network',
     ask: () => 'Which network is it? MTN, Airtel, Glo or 9mobile?',
+    hint: "I didn't recognise that network.",
     display: (value) => NETWORKS.find((n) => n.id === value)?.name,
     options: () => NETWORKS.map((n) => ({ id: n.id, label: n.name, aliases: n.aliases })),
     autofill: (slots) => {
@@ -77,6 +79,7 @@ function amountSlot({ min, max, label = 'Amount', question = 'How much?' }) {
     key: 'amount',
     label,
     ask: () => question,
+    hint: "I didn't catch an amount. Say it like five thousand naira, or 5k.",
     display: (value) => formatNaira(value),
     parse: (text) => {
       const amount = parseAmount(text)
@@ -99,6 +102,7 @@ export const FLOWS = {
         key: 'account',
         label: 'Account number',
         ask: () => 'Please provide the 10-digit account number, or say the name of a saved contact.',
+        hint: "I need the 10 digits of the account number. Say them one by one, like zero, eight, one, two.",
         display: (value) => groupDigits(value),
         parse: (text) => {
           const saved = findBeneficiary(text)
@@ -121,6 +125,7 @@ export const FLOWS = {
         key: 'bank',
         label: 'Bank',
         ask: () => 'Which bank is the account with?',
+        hint: "I didn't recognise that bank. Say a bank like Zenith, GTBank, Access, First Bank, UBA, OPay, Kuda or Moniepoint.",
         display: (value) => bankById(value)?.name,
         options: (slots, text) => {
           const matches = text ? findBanks(text) : []
@@ -237,6 +242,7 @@ export const FLOWS = {
         key: 'disco',
         label: 'Electricity company',
         ask: () => 'Which electricity company? For example Ikeja Electric, Eko or Abuja.',
+        hint: "I didn't recognise that electricity company.",
         display: (value) => DISCOS.find((d) => d.id === value)?.name,
         options: () => DISCOS.map((d) => ({ id: d.id, label: d.name, aliases: d.aliases })),
         parse: (text, slots, options) => {
@@ -248,6 +254,7 @@ export const FLOWS = {
         key: 'meter',
         label: 'Meter number',
         ask: () => 'What is the meter number?',
+        hint: 'I need the 11 to 13 digits on your meter.',
         display: (value) => groupDigits(value),
         parse: (text) => {
           const digits = parseDigits(text)

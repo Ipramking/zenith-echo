@@ -284,7 +284,9 @@ export async function handle(input) {
       clearSlot(session, target.key)
       session.step = target.key
       session.options = target.options?.(session.slots) ?? null
-      if (!(await fillCurrent(session, text.replace(SLOT_WORDS[target.key], ' '), null))) await advance(session)
+      if (!(await fillCurrent(session, text.replace(SLOT_WORDS[target.key], ' '), null))) {
+        await advance(session, [`Okay, let's change the ${target.label.toLowerCase()}.`])
+      }
       return respond(session)
     }
     const editable = flow.slots.filter((s) => s.parse).map((s) => s.label.toLowerCase())
@@ -295,7 +297,7 @@ export async function handle(input) {
   const correction = findCorrection(session, text)
   if (correction && correction.key !== session.step) {
     clearSlot(session, correction.key)
-    await advance(session)
+    await advance(session, [`Okay, let's change the ${correction.label.toLowerCase()}.`])
     await fillCurrent(session, text.replace(SLOT_WORDS[correction.key], ' '), null)
     return respond(session)
   }
@@ -309,7 +311,8 @@ export async function handle(input) {
   }
 
   const slot = flow.slots.find((s) => s.key === session.step)
-  say(session, `Sorry, I didn't get that. ${slot.ask(session.slots, session.options ?? [])}`, 'warning')
+  const hint = slot.hint ?? "Sorry, I didn't get that."
+  say(session, `${hint} ${slot.ask(session.slots, session.options ?? [])}`, 'warning')
   return respond(session)
 }
 
@@ -336,7 +339,7 @@ function requestAuthorisation(session, action) {
   session.action = action
   session.authorisation = { required, methods, limit }
 
-    if (action.amount > limit) {
+  if (action.amount > limit) {
     say(session, `Because this is above ${formatNaira(limit)}, please type your PIN on the keypad.`, 'info')
   } else if (required === 'pin') {
     say(session, 'Please type your PIN on the keypad to confirm.', 'info')

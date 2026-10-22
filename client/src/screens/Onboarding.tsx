@@ -485,9 +485,13 @@ function Practice({ onNext }: { onNext: () => void }) {
     const r = await echo.listen(8000)
     if (r.text) {
       setHeard(r.text)
-      await echo.runCommand(r.text)
       setDone(true)
-    } else setNote(r.error === 'unsupported' ? 'Voice input isn’t available in this browser.' : 'I didn’t catch that. Try again.')
+      void echo.say(`I heard you say: ${r.text}. That is how you talk to Echo.`, { force: true })
+    } else {
+      const miss = r.error === 'unsupported' ? 'Voice input isn’t available in this browser.' : 'I didn’t catch that. Tap the button and try again.'
+      setNote(miss)
+      void echo.say(miss, { force: true })
+    }
   }
 
   const doneText = holdVersion ? 'Well done. That is how confirming works.' : touchVersion ? 'Well done. You tapped twice, and that is how you use a button.' : 'Great. You can do that anytime.'
@@ -513,7 +517,7 @@ function Practice({ onNext }: { onNext: () => void }) {
               <Mic size={26} aria-hidden="true" /> {echo.listening ? 'Listening…' : 'Tap and speak'}
             </button>
           ) : (
-            <button type="button" className="ob-btn" onClick={() => { void echo.runCommand('check my balance'); setDone(true) }}>Hear my balance</button>
+            <button type="button" className="ob-btn" onClick={() => { setDone(true); void echo.say(doneText, { force: true }) }}>I’m ready</button>
           )}
           {heard && <p className="ob-heard" aria-live="polite">I heard: “{heard}”</p>}
           {note && <p className="ob-note" role="status" aria-live="polite">{note}</p>}

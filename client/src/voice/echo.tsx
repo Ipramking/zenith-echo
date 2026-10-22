@@ -174,12 +174,48 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     }
   }, [canSpeak])
 
-  /** Speech only: no caption. */
+  /** Speech only: no caption. Echo's server voice first; the phone's own voice only if the server can't be reached. */
+  const speakToken = useRef(0)
   const speak = useCallback(
-    (text: string, opts?: { force?: boolean; volume?: number }) => {
+    async (text: string, opts?: { force?: boolean; volume?: number }) => {
       const s = sRef.current
-      if (!text || !(s.voice || opts?.force) || !canSpeak) return Promise.resolve()
-      window.speechSynthesis.cancel()
+      if (!text || !(s.voice || opts?.force)) return
+      const token = ++speakToken.current
+      player.current?.pause()
+      if (canSpeak) window.speechSynthesis.cancel()
+      let url = ''
+      try {
+        url = URL.createObjectURL(await premiumSpeech(text))
+      } catch {
+        url = ''
+      }
+      if (token !== speakToken.current) {
+        if (url) URL.revokeObjectURL(url)
+        return
+      }
+      if (url) {
+        player.current?.pause()
+        const clip = new Audio(url)
+        player.current = clip
+        clip.volume = opts?.volume ?? 1
+        clip.playbackRate = RATE[s.speechRate]
+        speakingRef.current = true
+        setSpeaking(true)
+        await new Promise<void>((resolve) => {
+          clip.onended = () => resolve()
+          clip.onerror = () => resolve()
+          clip.onpause = () => resolve()
+          clip.play().catch(() => resolve())
+        })
+        URL.revokeObjectURL(url)
+        if (player.current === clip) player.current = null
+        if (token === speakToken.current) {
+          speakingRef.current = false
+          setSpeaking(false)
+        }
+        return
+      }
+      if (!canSpeak) return
       return new Promise<void>((resolve) => {
         const u = new SpeechSynthesisUtterance(text)
         const all = window.speechSynthesis.getVoices()
@@ -218,6 +254,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
   )
 
   const stop = useCallback(() => {
+    speakToken.current += 1
     player.current?.pause()
     player.current = null
     if (canSpeak) window.speechSynthesis.cancel()
@@ -296,39 +333,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  /** Echo's own voice from the server, falling back to the phone's voice if the server can't be reached. */
-  const speakReply = useCallback(
-    async (text: string, volume = 1) => {
-      const s = sRef.current
-      if (!text || !s.voice) return
-      let url = ''
-      try {
-        url = URL.createObjectURL(await premiumSpeech(text))
-      } catch {
-        await speak(text, { volume })
-        return
-      }
-      if (canSpeak) window.speechSynthesis.cancel()
-      player.current?.pause()
-      const clip = new Audio(url)
-      player.current = clip
-      clip.volume = volume
-      clip.playbackRate = RATE[s.speechRate]
-      speakingRef.current = true
-      setSpeaking(true)
-      await new Promise<void>((resolve) => {
-        clip.onended = () => resolve()
-        clip.onerror = () => resolve()
-        clip.onpause = () => resolve()
-        clip.play().catch(() => resolve())
-      })
-      URL.revokeObjectURL(url)
-      if (player.current === clip) player.current = null
-      speakingRef.current = false
-      setSpeaking(false)
-    },
-    [canSpeak, speak],
-  )
+  const speakReply = useCallback((text: string, volume = 1) => speak(text, { volume }), [speak])
 
   /**
    * Every reply: show message.text as a caption. With headphones on, play message.speech. In whisper mode, play
