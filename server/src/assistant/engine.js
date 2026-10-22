@@ -336,9 +336,7 @@ function requestAuthorisation(session, action) {
   session.action = action
   session.authorisation = { required, methods, limit }
 
-  if (!methods.pin && !methods.biometric) {
-    say(session, 'You need to create a PIN before you can pay. Please set one up in Settings.', 'warning')
-  } else if (action.amount > limit) {
+    if (action.amount > limit) {
     say(session, `Because this is above ${formatNaira(limit)}, please type your PIN on the keypad.`, 'info')
   } else if (required === 'pin') {
     say(session, 'Please type your PIN on the keypad to confirm.', 'info')
