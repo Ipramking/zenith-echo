@@ -7,10 +7,11 @@ import { PinPad } from '../components/PinPad'
 import { useNav } from '../state/nav'
 import { EXTRAS, INTERACTIONS, PROFILES, SCALE_STEPS, useSettings, type Extra, type Interaction, type Privacy, type ProfileId } from '../state/settings'
 import { useEcho } from '../voice/echo'
+import { clickByVoice } from '../voice/voiceClick'
 
 type StepId = 'welcome' | 'mode' | 'profile' | 'extras' | 'hear' | 'mic' | 'privacy' | 'display' | 'secure' | 'practice' | 'ready'
 
-const ORDER: StepId[] = ['mode', 'profile', 'extras', 'hear', 'mic', 'privacy', 'display', 'secure', 'practice', 'ready']
+const ORDER: StepId[] = ['extras', 'hear', 'secure']
 
 /** The text-size screen is skipped for the blind or low vision profile, which already gets big text and a dark theme. */
 const stepsFor = (p: ProfileId): StepId[] => ORDER.filter((s) => !(s === 'display' && p === 'blind'))
@@ -18,16 +19,16 @@ const stepsFor = (p: ProfileId): StepId[] => ORDER.filter((s) => !(s === 'displa
 /** Steps before the profile is applied are always spoken, because spoken guidance may not be on yet. */
 const ALWAYS_SPOKEN: StepId[] = ['mode', 'profile', 'extras']
 
-const SAMPLE = "Hello, I'm Echo, your Zenith banking assistant. Can you hear me clearly?"
+const SAMPLE = "Hello, I'm Echo, your Zenith banking assistant. Can you hear me clearly? Say yes, or say louder."
 
 const PROMPT: Record<Exclude<StepId, 'welcome' | 'hear'>, (touch: boolean, tremor: boolean) => string> = {
   mode: () => 'How do you want to use Echo? Voice, or Touch and read.',
   profile: () => 'Choose your main profile: blind or low vision, or standard.',
-  extras: () => 'Anything else that would help? You can choose more than one: hard of hearing, tremors or difficulty tapping, or simple words. Or skip.',
+  extras: () => 'Anything that would help? Say hard of hearing, tremors, or simple words. Then say next. Or say none.',
   mic: () => 'Echo needs your microphone to hear you. Tap Allow microphone, or skip.',
   privacy: () => 'Privacy mode. Normal, Whisper or Headphones. This decides how Echo says your balance and other private details.',
   display: () => 'Choose your text size and theme.',
-  secure: () => 'Secure your account. Your voice can never approve a payment on its own.',
+  secure: () => 'Create a 4-digit PIN. Type it on the keypad yourself. Never say your PIN out loud.',
   practice: (touch, tremor) => (tremor ? 'Practice. Press and hold the button until it fills.' : touch ? 'Practice. Tap once to hear a button. Tap it twice to use it.' : 'Practice. Try saying: check my balance.'),
   ready: () => "You're ready. Say help anytime.",
 }
@@ -62,7 +63,12 @@ export function Onboarding() {
   }
   const next = (profile: ProfileId = settings.profile) => {
     const list = stepsFor(profile)
-    go(list[Math.min(list.length - 1, list.indexOf(step) + 1)])
+    const at = list.indexOf(step)
+    if (at === list.length - 1) {
+      finish()
+      return
+    }
+    go(list[at + 1])
   }
   const back = () => {
     if (innerBack.current?.()) return
@@ -76,6 +82,13 @@ export function Onboarding() {
     setPhase('app')
     setTab(replay ? 'more' : 'home')
   }
+
+  // Hands-free setup: saying what is on a button presses it.
+  useEffect(() => {
+    echo.setVoiceHandler((text) => clickByVoice(text, document.querySelector('.ob') ?? document))
+    return () => echo.setVoiceHandler(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Speak the step counter (always) and the prompt (when spoken guidance is on), and move focus to the heading.
   useEffect(() => {
@@ -96,10 +109,18 @@ export function Onboarding() {
         <button
           type="button"
           className="ob-welcome"
+          data-tr-direct
           autoFocus
           onClick={() => {
             echo.unlock() // this tap is what lets the browser play Echo's voice
-            go('mode')
+            if (!replay) {
+              applyProfile('blind', [], 'touchRead')
+              update({ privacy: 'whisper', wakeWord: true, voice: true })
+            }
+            setMode('touchRead')
+            setPicked('blind')
+            void echo.requestMic()
+            go('extras')
           }}
         >
           <Logo size={84} />
@@ -111,8 +132,9 @@ export function Onboarding() {
   }
 
   const applyAndNext = (chosen: Extra[]) => {
-    applyProfile(picked ?? 'standard', chosen, mode ?? 'voice')
-    next(picked ?? 'standard')
+    applyProfile(picked ?? 'blind', chosen, mode ?? 'touchRead')
+    update({ privacy: settings.privacy || 'whisper' })
+    next(picked ?? 'blind')
   }
 
   return (
@@ -370,7 +392,7 @@ type Sub = 'keep' | 'bio' | 'create' | 'confirm'
 function Secure({ onNext, innerBack }: { onNext: () => void; innerBack: React.RefObject<(() => boolean) | null> }) {
   const { settings, update, setPin, hasPin } = useSettings()
   const echo = useEcho()
-  const [sub, setSub] = useState<Sub>(hasPin ? 'keep' : 'bio')
+  const [sub, setSub] = useState<Sub>(hasPin ? 'keep' : 'create')
   const [first, setFirst] = useState('')
   const [msg, setMsg] = useState('')
   const [round, setRound] = useState(0) // remounts the keypad to clear it
@@ -384,8 +406,8 @@ function Secure({ onNext, innerBack }: { onNext: () => void; innerBack: React.Re
         setRound((r) => r + 1)
         return true
       }
-      if (sub === 'create') {
-        setSub('bio')
+      if (sub === 'create' && hasPin) {
+        setSub('keep')
         return true
       }
       if (sub === 'bio' && hasPin) {
@@ -413,7 +435,7 @@ function Secure({ onNext, innerBack }: { onNext: () => void; innerBack: React.Re
         <p className="ob-lead">Your voice can never approve a payment on its own.</p>
         <div className="ob-actions">
           <button type="button" className="ob-btn" onClick={onNext}>Keep my PIN</button>
-          <button type="button" className="ob-btn alt" onClick={() => setSub('bio')}>Set a new PIN</button>
+          <button type="button" className="ob-btn alt" onClick={() => setSub('create')}>Set a new PIN</button>
         </div>
       </>
     )

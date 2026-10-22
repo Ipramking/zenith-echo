@@ -8,13 +8,14 @@ import { useFlow } from '../state/flow'
 import { useDailyLimit } from '../state/limits'
 import { useNav, type RechargeMode } from '../state/nav'
 import { useStore } from '../state/store'
+import { useVoiceFill, type FillValues } from '../voice/fill'
 
 const QUICK = [100, 200, 500, 1000, 2000, 5000]
 
 export function Recharge() {
   const { accounts, beneficiaries } = useStore()
   const { recharge, openRecharge } = useNav()
-  const { start } = useFlow()
+  const { start, setStage } = useFlow()
 
   const [source, setSource] = useState('sav')
   const [net, setNet] = useState('mtn')
@@ -67,6 +68,20 @@ export function Recharge() {
     }
     start(intent)
   }
+
+  const fromVoice = (v: FillValues) => {
+    if (v.network) setNet(v.network)
+    if (v.phone !== undefined) setPhone(v.phone)
+    if (v.amount !== undefined) setAmount(String(v.amount))
+    if (v.plan !== undefined) setPlanId(v.plan)
+  }
+  const submitByVoice = () => {
+    if (!ready) return
+    submit()
+    setStage('auth')
+  }
+  useVoiceFill('airtime', fromVoice, submitByVoice)
+  useVoiceFill('data', fromVoice, submitByVoice)
 
   const seg = (m: RechargeMode, label: string) => (
     <button type="button" role="tab" aria-selected={recharge === m} className={recharge === m ? 'on' : ''} onClick={() => openRecharge(m)}>{label}</button>

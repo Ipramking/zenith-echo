@@ -39,8 +39,11 @@ function describe(el: Element): string {
 
 const readText = (el: Element) => ((el as HTMLElement).innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
 
+const visible = (el: Element) => (el as HTMLElement).offsetParent !== null && !el.closest('[aria-hidden="true"]')
+
 /**
- * "Touch and read": a single tap speaks what is under the finger, a double tap on the same item activates it.
+ * Touch and read, the way TalkBack works: one tap reads what is under your finger and selects it, a double tap
+ * (anywhere) activates the selected item, and a swipe right or left moves to the next or previous item.
  * Keyboard and screen-reader activations (clicks with no pointer) are never intercepted.
  */
 export function useTouchRead() {
@@ -51,25 +54,58 @@ export function useTouchRead() {
 
   useEffect(() => {
     if (settings.interaction !== 'touchRead') return
-    let armed: { el: Element; t: number } | null = null
+    let focused: Element | null = null
+    let selectedAt = 0
+    let lastTap = 0
     let hints = 3 // remind the first few times how to activate
+    let touch: { x: number; y: number; t: number } | null = null
+
+    const select = (el: Element, hint: boolean) => {
+      document.querySelector('.tr-focus')?.classList.remove('tr-focus')
+      el.classList.add('tr-focus')
+      focused = el
+      selectedAt = performance.now()
+      ;(el as HTMLElement).scrollIntoView?.({ block: 'nearest' })
+      const extra = hint && hints-- > 0 && !(el as HTMLButtonElement).disabled ? '. Double tap to activate.' : ''
+      void echoRef.current.say(describe(el) + extra, { force: true })
+    }
+
+    const activate = (el: Element) => {
+      const h = el as HTMLElement
+      document.querySelector('.tr-focus')?.classList.remove('tr-focus')
+      focused = null
+      if (h instanceof HTMLInputElement || h instanceof HTMLTextAreaElement || h instanceof HTMLSelectElement) h.focus()
+      h.click()
+    }
 
     const onClick = (e: MouseEvent) => {
       if (e.detail === 0) return
       const target = e.target as Element | null
       if (!target?.closest) return
+      // A few controls must work on the very first tap, like "Tap anywhere to start", which also unlocks sound.
+      if (target.closest('[data-tr-direct]')) return
+      const now = performance.now()
+
+      // Double tap anywhere: activate the selected item.
+      if (focused && now - lastTap < 350 && document.contains(focused)) {
+        e.preventDefault()
+        e.stopPropagation()
+        lastTap = 0
+        activate(focused)
+        return
+      }
+      lastTap = now
+
       const control = target.closest(INTERACTIVE)
       if (control) {
-        const now = performance.now()
-        if (armed && armed.el === control && now - armed.t < 1200) {
-          armed = null // second tap: let the click through, which activates it
+        if (focused === control && now - selectedAt < 1200) {
+          focused = null // second tap on the same item: let the click through, which activates it
+          document.querySelector('.tr-focus')?.classList.remove('tr-focus')
           return
         }
         e.preventDefault()
         e.stopPropagation()
-        armed = { el: control, t: now }
-        const hint = hints-- > 0 && !(control as HTMLButtonElement).disabled ? '. Double tap to activate.' : ''
-        void echoRef.current.say(describe(control) + hint, { force: true })
+        select(control, true)
         return
       }
       const block = target.closest(READABLE)
@@ -79,7 +115,35 @@ export function useTouchRead() {
       }
     }
 
+    const onTouchStart = (e: TouchEvent) => {
+      const p = e.touches[0]
+      touch = p && e.touches.length === 1 ? { x: p.clientX, y: p.clientY, t: performance.now() } : null
+    }
+
+    // Swipe right: next item. Swipe left: previous item.
+    const onTouchEnd = (e: TouchEvent) => {
+      const start = touch
+      touch = null
+      const p = e.changedTouches[0]
+      if (!start || !p) return
+      const dx = p.clientX - start.x
+      const dy = p.clientY - start.y
+      if (performance.now() - start.t > 700 || Math.abs(dx) < 60 || Math.abs(dy) > 50) return
+      const items = Array.from(document.querySelectorAll(INTERACTIVE)).filter(visible)
+      if (!items.length) return
+      const at = focused ? items.indexOf(focused) : -1
+      const next = items[Math.max(0, Math.min(items.length - 1, at + (dx > 0 ? 1 : -1)))]
+      if (next) select(next, false)
+    }
+
     document.addEventListener('click', onClick, true)
-    return () => document.removeEventListener('click', onClick, true)
+    document.addEventListener('touchstart', onTouchStart, { capture: true, passive: true })
+    document.addEventListener('touchend', onTouchEnd, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener('click', onClick, true)
+      document.removeEventListener('touchstart', onTouchStart, true)
+      document.removeEventListener('touchend', onTouchEnd, true)
+      document.querySelector('.tr-focus')?.classList.remove('tr-focus')
+    }
   }, [settings.interaction])
 }

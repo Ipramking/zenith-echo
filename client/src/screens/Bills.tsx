@@ -9,6 +9,7 @@ import { useFlow } from '../state/flow'
 import { useDailyLimit } from '../state/limits'
 import { useNav } from '../state/nav'
 import { useStore } from '../state/store'
+import { useVoiceFill } from '../voice/fill'
 
 export const CAT_ICON: Record<string, LucideIcon> = {
   electricity: Zap,
@@ -80,7 +81,7 @@ export function Bills() {
 
 function Electricity() {
   const { accounts } = useStore()
-  const { start } = useFlow()
+  const { start, setStage } = useFlow()
   const [source, setSource] = useState('sav')
   const [provider, setProvider] = useState('')
   const [type, setType] = useState<'prepaid' | 'postpaid'>('prepaid')
@@ -119,6 +120,21 @@ function Electricity() {
     }
     start(intent)
   }
+
+  useVoiceFill(
+    'electricity',
+    (v) => {
+      if (v.provider) setProvider(v.provider)
+      if (v.meter !== undefined) setMeter(v.meter)
+      if (v.amount !== undefined) setAmount(String(v.amount))
+      setType('prepaid')
+    },
+    () => {
+      if (!ready) return
+      submit()
+      setStage('auth')
+    },
+  )
 
   return (
     <>

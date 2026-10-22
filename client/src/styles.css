@@ -662,3 +662,11 @@ h2:focus { outline: none; }
 .echo-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .echo-option { min-height: 56px; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--accent); background: transparent; color: inherit; font-weight: 700; text-align: left; }
 .echo-approve { display: flex; flex-direction: column; gap: 10px; }
+
+.tabbar .tab-echo { position: relative; color: var(--accent); font-weight: 600; }
+.tab-echo-orb { display: grid; place-items: center; width: 56px; height: 56px; margin-top: -26px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ff6b6b, #ed1c24 45%, #8b0a10); color: #fff; border: 3px solid var(--surface); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); }
+.tab-echo.live .tab-echo-orb { animation: echo-tab-pulse 1.6s ease-out infinite; }
+@keyframes echo-tab-pulse { 0% { box-shadow: 0 0 0 0 rgba(237, 28, 36, 0.55); } 100% { box-shadow: 0 0 0 16px rgba(237, 28, 36, 0); } }
+@media (prefers-reduced-motion: reduce) { .tab-echo.live .tab-echo-orb { animation: none; } }
+.echo-last { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 0; }
+.tr-focus { outline: 4px solid #ffd600 !important; outline-offset: 3px; border-radius: 10px; }

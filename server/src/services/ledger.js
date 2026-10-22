@@ -3,7 +3,7 @@ import { badRequest } from '../errors.js'
 const owner = {
   name: 'AMARA OKEKE',
   account: '1004453179',
-    phone: '08031234567',
+  phone: '08031234567',
   bankName: 'Zenith Bank',
 }
 

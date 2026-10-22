@@ -1,5 +1,5 @@
 import { BANKS, isValidNuban } from '../banking/banks.js'
-import { bankById, BENEFICIARIES, lookupName } from '../banking/directory.js'
+import { bankById, BENEFICIARIES, isKnownAccount, lookupName } from '../banking/directory.js'
 import { badRequest, notFound, requireAmount, requireDigits } from '../errors.js'
 import { debit } from './ledger.js'
 
@@ -25,7 +25,7 @@ function requireBank(bankId) {
 export async function resolveAccount({ account, bankId }) {
   const digits = requireDigits(account, 'Account number', { min: 10 })
   const bank = requireBank(bankId)
-  if (!isValidNuban(digits, bank)) {
+  if (!isKnownAccount(digits, bank.id) && !isValidNuban(digits, bank)) {
     throw badRequest(`That account number does not match ${bank.name}`)
   }
   const name = await lookupName(digits, bank.id)

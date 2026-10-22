@@ -7,6 +7,7 @@ import type { Intent } from '../lib/types'
 import { useFlow } from '../state/flow'
 import { useDailyLimit } from '../state/limits'
 import { useNav } from '../state/nav'
+import { useVoiceFill } from '../voice/fill'
 import { useStore } from '../state/store'
 
 type Mode = 'own' | 'zenith' | 'other'
@@ -20,7 +21,8 @@ const MODES: { id: Mode; label: string }[] = [
 export function Transfer() {
   const { accounts, beneficiaries } = useStore()
   const { prefill } = useNav()
-  const { start } = useFlow()
+  const { start, setStage } = useFlow()
+  const [byVoice, setByVoice] = useState(false)
 
   const [source, setSource] = useState('sav')
   const [mode, setMode] = useState<Mode>(prefill ? (prefill.bank === ZENITH ? 'zenith' : 'other') : 'zenith')
@@ -115,10 +117,31 @@ export function Transfer() {
         ...(note.trim() ? ([['Description', note.trim()]] as [string, string][]) : []),
       ],
       saveBeneficiary: own ? undefined : { kind: 'bank', name, bank: bankName, accountNumber: acct },
-      viaVoice: !!prefill?.viaVoice && known?.accountNumber === acct,
+      viaVoice: byVoice || (!!prefill?.viaVoice && known?.accountNumber === acct),
     }
     start(intent)
   }
+
+  useVoiceFill(
+    'transfer',
+    (v) => {
+      setByVoice(true)
+      if (v.bank) {
+        const m: Mode = v.bank === ZENITH ? 'zenith' : 'other'
+        setMode(m)
+        setBank(m === 'other' ? v.bank : '')
+      }
+      if (v.account !== undefined) setAcct(v.account)
+      if (v.account && v.name) setKnown({ accountNumber: v.account, name: v.name })
+      if (v.amount !== undefined) setAmount(String(v.amount))
+      if (v.note !== undefined) setNote(v.note)
+    },
+    () => {
+      if (!ready) return
+      submit()
+      setStage('auth')
+    },
+  )
 
   return (
     <div className="page">

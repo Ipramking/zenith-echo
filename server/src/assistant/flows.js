@@ -1,5 +1,5 @@
 import { findBanks, isValidNuban } from '../banking/banks.js'
-import { bankById, findBeneficiary } from '../banking/directory.js'
+import { bankById, findBeneficiary, isKnownAccount } from '../banking/directory.js'
 import { formatNaira, parseAmount, parseDigits } from '../banking/parsers.js'
 import { DATA_PLANS, DISCOS, NETWORKS, detectNetwork, normalisePhone, validateMeter } from '../services/bills.js'
 import { getAccount } from '../services/ledger.js'
@@ -68,7 +68,7 @@ function plural(count, word) {
 
 function checkBank(bankId, slots) {
   const bank = bankById(bankId)
-  if (slots.account && !isValidNuban(slots.account, bank)) {
+  if (slots.account && !isKnownAccount(slots.account, bankId) && !isValidNuban(slots.account, bank)) {
     return { error: `That account number doesn't match ${bank.name}.` }
   }
   return { value: bankId }
@@ -212,10 +212,15 @@ export const FLOWS = {
           DATA_PLANS.filter((p) => p.networkId === slots.network).map((p) => ({
             id: p.id,
             label: `${p.size} for ${p.validity} at ${formatNaira(p.price)}`,
-            aliases: [p.size.toLowerCase(), p.size.replace(/(\d+)/, '$1 '), ...(SIZE_WORDS[p.size.toLowerCase()] ?? [])],
+            aliases: [p.size.toLowerCase(), p.size.toLowerCase().replace(/(gb|mb)/, ' $1'), ...(SIZE_WORDS[p.size.toLowerCase()] ?? [])],
           })),
         parse: (text, slots, options) => {
-          const choice = pickOption(text.replace(/(\d+)\s?(gigs?|gb)/i, '$1gb').replace(/(\d+)\s?mb/i, '$1mb'), options)
+          const spoken = text
+            .toLowerCase()
+            .replace(/(\d+)\s*point\s*(\d)/g, '$1.$2')
+            .replace(/(\d+(?:\.\d+)?)\s?(gigs?|gigabytes?|gb)\b/g, '$1gb')
+            .replace(/(\d+(?:\.\d+)?)\s?(megs?|megabytes?|mb)\b/g, '$1mb')
+          const choice = pickOption(spoken, options)
           if (!choice) return null
           const plan = DATA_PLANS.find((p) => p.id === choice.id)
           if (plan.price > getAccount().balance) return { error: `Your balance can't cover ${formatNaira(plan.price)}.` }
@@ -254,13 +259,13 @@ export const FLOWS = {
         key: 'meter',
         label: 'Meter number',
         ask: () => 'What is the meter number?',
-        hint: 'I need the 11 to 13 digits on your meter.',
+        hint: 'I need the 11 digits on your meter.',
         display: (value) => groupDigits(value),
         parse: (text) => {
           const digits = parseDigits(text)
           if (!digits) return null
-          if (digits.length < 11 || digits.length > 13) {
-            return { error: `I heard ${plural(digits.length, 'digit')}. Meter numbers have 11 to 13 digits.` }
+          if (digits.length !== 11) {
+            return { error: `I heard ${plural(digits.length, 'digit')}. Meter numbers have 11 digits.` }
           }
           return { value: digits }
         },

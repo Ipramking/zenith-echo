@@ -1,7 +1,7 @@
 import { Globe, GraduationCap, Inbox as InboxIcon, Landmark, Lightbulb, Receipt, Repeat2, Search, ShieldCheck, Smartphone, Tv, UserRound, UserRoundPlus, Wifi, type LucideIcon } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { PickerSheet } from '../components/Fields'
-import { EchoOrb } from '../components/EchoUi'
+import { EchoLastReply } from '../components/EchoUi'
 import { Header, HistoryRow, KebabButton, Money, Sheet, Toggle, TxnRow } from '../components/Parts'
 import { BANKS, INBOX, lookupAccountName, PROFILE, ZENITH } from '../lib/data'
 import { greeting, initials, MASK, naira } from '../lib/format'
@@ -91,7 +91,7 @@ export function Home() {
         }
       />
       <div className="scroll">
-        <EchoOrb />
+        <EchoLastReply />
 
         <section className="card-grey">
           <div className="cg-top">

@@ -76,14 +76,14 @@ export const BASE: Settings = {
   flashAlerts: false,
   longerTimeouts: false,
   silentBalance: false,
-  biometrics: true,
+  biometrics: false,
   dailyLimit: 500000,
   pinHash: '',
   pinSalt: '',
-  interaction: 'voice',
+  interaction: 'touchRead',
   extras: [],
-  privacy: 'normal',
-  wakeWord: false,
+  privacy: 'whisper',
+  wakeWord: true,
 }
 
 /** Keys a profile, an extra or an interaction mode is allowed to (re)set. PIN, limits and privacy choices are left alone. */
@@ -136,7 +136,7 @@ export const INTERACTIONS: Def<Interaction>[] = [
     id: 'touchRead',
     title: 'Touch and read',
     blurb: 'Tap once to hear what is under your finger. Double tap to use it.',
-    defaults: { voice: true },
+    defaults: { voice: true, wakeWord: true },
   },
 ]
 
@@ -163,13 +163,13 @@ export function compose(profile: ProfileId, extras: Extra[], interaction: Intera
     ...extras.map((e) => EXTRAS.find((x) => x.id === e)!.defaults),
   ]
   for (const l of layers) s = { ...s, ...overlay(s, l) }
-  // In Touch and read there's no hands-free listening: opening the microphone would fight with the finger.
-  if (interaction === 'touchRead') s = { ...s, autoListen: false, wakeWord: false }
+  // Voice and touch work together: "Hey Ziva" stays on, and Echo doesn't open the microphone on its own after speaking.
+  if (interaction === 'touchRead') s = { ...s, autoListen: false, wakeWord: true }
   const patch = Object.fromEntries(PROFILE_KEYS.map((k) => [k, s[k]])) as Patch
   return { ...patch, profile, extras, interaction }
 }
 
-const KEY = 'zenith-echo:settings:v1'
+const KEY = 'zenith-echo:settings:v2'
 
 /** Reads saved settings, upgrading older shapes (single profile string, two privacy switches). */
 function load(): Settings {

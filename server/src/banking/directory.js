@@ -6,16 +6,36 @@ const KNOWN_ACCOUNTS = {
   'access:7619025532': 'OLAMIDE ANJORIN',
   'opay:8082114408': 'BUKOLA ADEYEMI',
   'moniepoint:7031556290': 'IBRAHIM MUSA AUTOS',
+  'zenith:2011223344': 'IBRAHIM MUSA BELLO',
+  'gtbank:0123456789': 'ADAEZE GRACE OBI',
 }
 
-const FIRST_NAMES = ['ADAEZE', 'TUNDE', 'NGOZI', 'EMEKA', 'FATIMA', 'SEGUN', 'AMAKA', 'YUSUF', 'FUNMI', 'CHUKWUDI']
-const LAST_NAMES = ['OKAFOR', 'BELLO', 'ADEBAYO', 'EZE', 'ABUBAKAR', 'OGUNLEYE', 'NWOSU', 'IBRAHIM', 'ADEWALE', 'OBI']
+const APP_NAMES = [
+  'ADAEZE GRACE OBI',
+  'IBRAHIM MUSA BELLO',
+  'FOLAKE TEMITOPE ADEBAYO',
+  'EMEKA CHUKWUDI NWOSU',
+  'AMINA YUSUF SANI',
+  'OLUWASEUN BAMIDELE LAWAL',
+  'NGOZI PATRICIA EZE',
+  'TAIWO KEHINDE ALABI',
+]
+
+export function appName(number) {
+  let h = 0
+  for (const c of number) h = (h * 31 + c.charCodeAt(0)) >>> 0
+  return APP_NAMES[h % APP_NAMES.length]
+}
 
 export const BENEFICIARIES = [
-  { nickname: 'My Mechanic', aliases: ['my mechanic', 'mechanic'], bankId: 'moniepoint', account: '7031556290' },
-  { nickname: 'Auntie Bukky', aliases: ['auntie bukky', 'aunty bukky', 'bukky'], bankId: 'opay', account: '8082114408' },
+  { nickname: 'My Mechanic', aliases: ['my mechanic', 'mechanic'], bankId: 'zenith', account: '2011223344' },
+  { nickname: 'Auntie Bukky', aliases: ['auntie bukky', 'aunty bukky', 'bukky'], bankId: 'gtbank', account: '0123456789' },
   { nickname: 'Daniel', aliases: ['daniel'], bankId: 'zenith', account: '2082146805' },
 ]
+
+export function isKnownAccount(account, bankId) {
+  return Boolean(KNOWN_ACCOUNTS[`${bankId}:${account}`])
+}
 
 export function findBeneficiary(text) {
   const spoken = ` ${text.toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ')} `
@@ -34,8 +54,7 @@ export function lookupName(account, bankId) {
         resolve(known)
         return
       }
-      const seed = account.split('').reduce((sum, d) => sum + Number(d), 0)
-      resolve(`${FIRST_NAMES[seed % FIRST_NAMES.length]} ${LAST_NAMES[Number(account[9]) % LAST_NAMES.length]}`)
+      resolve(appName(account))
     }, 900)
   })
 }
