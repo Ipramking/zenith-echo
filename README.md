@@ -212,7 +212,7 @@ All product decisions, testing on devices and the final submission are the team'
 
 | Name | Role |
 |---|---|
-| Daniel Toluwani Olorunda | Team Lead, Product Manager and Systems Strategist |
-| Lemeh Godwin Chisom | Frontend and UI Engineer |
-| Anjorin Olamide | AI / NLP and Backend Engineer |
-| Inioluwa Aroyewun | Full-Stack and Integration Engineer, QA |
+| Daniel Toluwani Olorunda | Product Manager |
+| Lemeh Godwin Chisom | Researcher |
+| Anjorin Olamide | Front-end Engineer |
+| Inioluwa Aroyewun | Full-Stack and Integration Engineer |
