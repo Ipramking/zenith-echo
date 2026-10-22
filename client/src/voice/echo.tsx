@@ -45,7 +45,7 @@ interface Echo {
   /** Call from a tap: browsers keep speech silent until the user has touched the page. */
   unlock: () => void
   /** Announce something (screen names, prompts). Captioned if captions are on, spoken if spoken guidance is on or `force`. */
-  say: (text: string, opts?: { force?: boolean; volume?: number }) => Promise<void>
+  say: (text: string, opts?: { force?: boolean; volume?: number; noCaption?: boolean }) => Promise<void>
   /**
    * Give a reply: captioned, then spoken as `speech`, quietly, or as `privateSpeech` depending on privacy mode.
    * Replies to commands are always captioned; pass `{ caption: false }` for announcements, which follow the Captions setting.
@@ -261,8 +261,8 @@ export function EchoProvider({ children }: { children: ReactNode }) {
   )
 
   const say = useCallback(
-    (text: string, opts?: { force?: boolean; volume?: number }) => {
-      if (sRef.current.captions) showCaption(text)
+    (text: string, opts?: { force?: boolean; volume?: number; noCaption?: boolean }) => {
+      if (sRef.current.captions && !opts?.noCaption) showCaption(text)
       return speak(text, opts)
     },
     [showCaption, speak],

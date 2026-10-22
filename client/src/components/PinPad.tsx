@@ -15,10 +15,10 @@ function shuffled(): number[] {
 }
 
 /**
- * PIN entry on a big keypad. By default the key layout is shuffled each time it opens, like the real app.
+ * PIN entry on a big keypad. The keys stay in the same place every time, so customers learn where each digit is.
  * Each key is labelled with its digit ("Five"). Progress is announced as "digit 2 of 4 entered", never the digit itself.
  */
-export function PinPad({ onComplete, length = 6, shuffle = true }: { onComplete: (code: string) => void; length?: number; shuffle?: boolean }) {
+export function PinPad({ onComplete, length = 6, shuffle = false }: { onComplete: (code: string) => void; length?: number; shuffle?: boolean }) {
   const echo = useEcho()
   const [digits, setDigits] = useState('')
   useEffect(() => {
@@ -34,7 +34,7 @@ export function PinPad({ onComplete, length = 6, shuffle = true }: { onComplete:
 
   const announce = useCallback((text: string) => {
     setStatus(text)
-    void say.current(text)
+    void say.current(text, { force: true, volume: 0.2, noCaption: true })
   }, [])
 
   // A ref holds the digits so each press is announced exactly once (state updaters can run twice in dev).
