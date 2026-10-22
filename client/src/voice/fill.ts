@@ -43,6 +43,18 @@ export function publishFill(kind: FillKind, values: FillValues, submit = false) 
   listeners.forEach((listener) => listener(current!))
 }
 
+let flowCloser: (() => boolean) | null = null
+
+/** The payment sheets (confirm, success, receipt) register here so Echo can close them by voice. */
+export function setFlowCloser(close: (() => boolean) | null) {
+  flowCloser = close
+}
+
+/** Close any open payment sheet. Returns true if one was open. */
+export function closeOpenFlow(): boolean {
+  return flowCloser?.() ?? false
+}
+
 export function clearFill() {
   current = null
 }
