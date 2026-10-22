@@ -5,6 +5,14 @@ import { useEcho } from './echo'
 const INTERACTIVE = 'button, a[href], input, select, textarea, [role="button"], [role="switch"], [role="radio"], [role="checkbox"], [role="option"], [role="tab"]'
 const READABLE = 'h1, h2, h3, p, li, dt, dd, label, output, small, time, b, span'
 
+/** Keep it short: the first sentence, at most a dozen or so words. */
+function brief(text: string, max = 14): string {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  const first = clean.split(/(?<=[.!?])\s/)[0] ?? clean
+  const w = first.split(' ')
+  return w.length > max ? w.slice(0, max).join(' ') : first
+}
+
 /** The spoken name of a control: aria-label, then the row's heading, then its label, then its visible text. */
 function nameOf(el: Element): string {
   const aria = el.getAttribute('aria-label')
@@ -14,14 +22,14 @@ function nameOf(el: Element): string {
     const t = by.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ').trim()
     if (t) return t
   }
-  const rowTitle = el.querySelector('.row-text b')?.textContent?.trim()
+  const rowTitle = el.querySelector('.row-text b, b, strong')?.textContent?.trim()
   if (rowTitle) return rowTitle
   if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) {
     const label = el.closest('label')?.querySelector('span')?.textContent?.trim()
     if (label) return label
     if (el instanceof HTMLInputElement && el.placeholder) return el.placeholder
   }
-  return ((el as HTMLElement).innerText ?? el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  return brief((el as HTMLElement).innerText ?? el.textContent ?? '', 8)
 }
 
 function describe(el: Element): string {
@@ -33,11 +41,10 @@ function describe(el: Element): string {
   if (role === 'switch') return `${name}, switch, ${el.getAttribute('aria-checked') === 'true' ? 'on' : 'off'}${dim}`
   if (role === 'radio' || role === 'option' || role === 'tab') return `${name}, ${role === 'radio' ? 'radio button' : role}, ${el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true' ? 'selected' : 'not selected'}${dim}`
   if (role === 'checkbox') return `${name}, checkbox, ${el.getAttribute('aria-checked') === 'true' ? 'checked' : 'not checked'}${dim}`
-  if (el.tagName === 'A') return `${name}, link${dim}`
   return `${name}, button${dim}`
 }
 
-const readText = (el: Element) => ((el as HTMLElement).innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
+const readText = (el: Element) => brief((el as HTMLElement).innerText ?? '')
 
 const visible = (el: Element) => (el as HTMLElement).offsetParent !== null && !el.closest('[aria-hidden="true"]')
 
@@ -66,6 +73,10 @@ export function useTouchRead() {
       focused = el
       selectedAt = performance.now()
       ;(el as HTMLElement).scrollIntoView?.({ block: 'nearest' })
+      if (el.closest('.pinpad')) {
+        void echoRef.current.say(nameOf(el), { force: true, volume: 0.2, noCaption: true })
+        return
+      }
       const extra = hint && hints-- > 0 && !(el as HTMLButtonElement).disabled ? '. Double tap to activate.' : ''
       void echoRef.current.say(describe(el) + extra, { force: true })
     }
