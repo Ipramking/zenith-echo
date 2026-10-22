@@ -6,7 +6,8 @@ import { getAccount } from '../services/ledger.js'
 import { consumeTicket, enabledMethods, voiceLimit } from '../services/security.js'
 import { sendTransfer } from '../services/transfers.js'
 import { FLOWS, SLOT_WORDS } from './flows.js'
-import { detectIntent, groupDigits, isCommand, toSpeech } from './language.js'
+import { detectIntent, detectLanguage, groupDigits, isCommand } from './language.js'
+import { buildMessage } from './localise.js'
 
 const SESSION_TTL = 15 * 60 * 1000
 const sessions = new Map()
@@ -28,6 +29,7 @@ function blankSession(id = randomUUID()) {
   return {
     id,
     status: 'idle',
+    language: 'en',
     intent: null,
     slots: {},
     step: null,
@@ -222,6 +224,7 @@ export async function handle(input) {
   session.updatedAt = Date.now()
   const text = String(input.text ?? '').trim().slice(0, 300)
   const flow = flowOf(session)
+  if (text) session.language = detectLanguage(text, input.language, session.language)
 
   if (input.intent) {
     if (!FLOWS[input.intent] && !['balance', 'history'].includes(input.intent)) {
@@ -232,7 +235,7 @@ export async function handle(input) {
   }
 
   if (text && isCommand(text, 'cancel')) {
-    Object.assign(session, blankSession(session.id), { status: 'cancelled' })
+    Object.assign(session, blankSession(session.id), { status: 'cancelled', language: session.language })
     say(session, 'Cancelled. Nothing was sent. What would you like to do next?', 'warning')
     return respond(session)
   }
@@ -336,11 +339,11 @@ function requestAuthorisation(session, action) {
   if (!methods.pin && !methods.biometric) {
     say(session, 'You need to create a PIN before you can pay. Please set one up in Settings.', 'warning')
   } else if (action.amount > limit) {
-    say(session, `Because this is above ${formatNaira(limit)}, please enter your PIN.`, 'info')
+    say(session, `Because this is above ${formatNaira(limit)}, please type your PIN on the keypad.`, 'info')
   } else if (required === 'pin') {
-    say(session, 'Please enter your PIN to confirm.', 'info')
+    say(session, 'Please type your PIN on the keypad to confirm.', 'info')
   } else {
-    say(session, 'Please confirm with your fingerprint, or enter your PIN.', 'info')
+    say(session, 'Please confirm with your fingerprint or face, or type your PIN on the keypad.', 'info')
   }
 }
 
@@ -373,9 +376,10 @@ export async function execute({ sessionId, ticket }) {
 
 export function respond(session) {
   const flow = flowOf(session)
-  const { text, tone, sensitive = false } = session.message
+  const { text, tone } = session.message
   return {
     sessionId: session.id,
+    language: session.language,
     status: session.status,
     intent: session.intent,
     screen: flow?.screen ?? (session.receipt ? session.receipt.type : 'home'),
@@ -395,6 +399,6 @@ export function respond(session) {
     action: session.status === 'authorising' ? session.action : null,
     authorisation: session.status === 'authorising' ? session.authorisation : null,
     receipt: session.receipt,
-    message: { text, speech: toSpeech(text), tone, sensitive },
+    message: { ...buildMessage(text, session.language), tone },
   }
 }
