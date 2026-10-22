@@ -386,6 +386,7 @@ export function respond(session) {
     screen: flow?.screen ?? (session.receipt ? session.receipt.type : 'home'),
     title: flow?.title ?? null,
     step: session.step,
+    fields: { ...session.slots },
     checklist: flow
       ? flow.slots.map((slot) => ({
           key: slot.key,

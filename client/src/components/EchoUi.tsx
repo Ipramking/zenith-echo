@@ -138,6 +138,24 @@ export function CommandList() {
   )
 }
 
+/** On Home: what Echo last heard and said, so the conversation can be read as well as heard. */
+export function EchoLastReply() {
+  const { reply, wakeActive } = useEcho()
+  return (
+    <section className="echo-last" aria-label="Echo">
+      <p className="orb-hint" role="status" aria-live="polite">
+        {wakeActive ? 'Echo is listening. Say “Hey Ziva”, or tap Echo below.' : 'Tap Echo below to talk.'}
+      </p>
+      {reply && (
+        <div className="orb-reply" role="status" aria-live="polite">
+          {reply.heard && <small>You said: “{reply.heard}”</small>}
+          <span>{reply.message.text}</span>
+        </div>
+      )}
+    </section>
+  )
+}
+
 /** The big round Echo button on Home. Tap to talk; it pulses while listening. */
 export function EchoOrb() {
   const echo = useEcho()

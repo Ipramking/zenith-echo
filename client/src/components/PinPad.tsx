@@ -1,6 +1,7 @@
 import { Delete } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useEcho } from '../voice/echo'
+import { pinPadMounted } from '../voice/fill'
 
 const WORDS = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine']
 
@@ -20,6 +21,10 @@ function shuffled(): number[] {
 export function PinPad({ onComplete, length = 6, shuffle = true }: { onComplete: (code: string) => void; length?: number; shuffle?: boolean }) {
   const echo = useEcho()
   const [digits, setDigits] = useState('')
+  useEffect(() => {
+    pinPadMounted(true)
+    return () => pinPadMounted(false)
+  }, [])
   const [status, setStatus] = useState('')
   const layout = useMemo(() => (shuffle ? shuffled() : [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]), [shuffle])
   const done = useRef(onComplete)

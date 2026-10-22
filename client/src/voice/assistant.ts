@@ -36,6 +36,7 @@ export interface AssistantReply {
   screen: string
   title: string | null
   step: string | null
+  fields?: Record<string, string | number>
   checklist: ChecklistItem[]
   options: { id: string; label: string }[] | null
   authorisation: { required: 'pin' | 'any'; limit: number } | null

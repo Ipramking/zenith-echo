@@ -6,6 +6,7 @@ import { useStore } from '../state/store'
 import type { Receipt } from '../lib/types'
 import { approveWithPin, choose, inConversation, premiumSpeech, talk, wantsAssistant, type AssistantReceipt, type AssistantReply } from './assistant'
 import { HELP_LIST, parseCommand, type Dest } from './commands'
+import { bankNameFor, discoNameFor, markVoiceNavigation, pinPadOpen, publishFill, type FillKind } from './fill'
 
 // Minimal typings: SpeechRecognition isn't in TypeScript's DOM lib yet.
 interface RecResult { 0: { transcript: string }; isFinal?: boolean }
@@ -30,7 +31,10 @@ const getRec = (): RecCtor | null => {
 
 const RATE = { slow: 0.8, normal: 1, fast: 1.25 } as const
 /** "Hey Ziva", with a few spellings speech recognition tends to produce. Anything after it is the command. */
-const WAKE = /\b(?:hey|hi|okay|ok)[\s,]*(?:ziva|zeva|zeeva|ziba|zeeba|siva|seva)\b[\s,.!?]*(.*)$/i
+const WAKE = /\b(?:(?:hey|hi|hello|okay|ok)[\s,]*)?(?:ziva|zeva|zeeva|ziba|zeeba|siva|seva|diva|viva|zifa)\b[\s,.!?]*(.*)$/i
+const STOP_WORDS = /^(stop|cancel|quiet|be quiet|wait|hold on|enough|shut up)\b/i
+const SPOKEN_DIGITS = /\b(\d|zero|oh|one|two|three|four|five|six|seven|eight|nine)\b/gi
+const words = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
 
 export type Cue = 'success' | 'error' | 'info' | 'listen' | 'tick'
 export interface ListenResult { text: string | null; error?: string }
@@ -86,6 +90,10 @@ interface Echo {
   chooseOption: (id: string) => Promise<void>
   /** Approve the payment Echo is waiting on. Returns false if the PIN was wrong. */
   approveAssistant: (pin: string) => Promise<boolean>
+  /** Open the microphone for one command (the Echo button). */
+  startListening: () => void
+  /** While a screen is open that wants plain answers (setup), what the user says goes here first. Return true if handled. */
+  setVoiceHandler: (handler: ((text: string) => boolean) | null) => void
 }
 
 const C = createContext<Echo | null>(null)
@@ -143,6 +151,10 @@ export function EchoProvider({ children }: { children: ReactNode }) {
   micRef.current = mic
   const player = useRef<HTMLAudioElement | null>(null)
   const assistantRef = useRef<AssistantReply | null>(null)
+  const lastSpoken = useRef({ text: '', at: 0 })
+  const awaiting = useRef(0)
+  const voiceHandler = useRef<((text: string) => boolean) | null>(null)
+  const lastIntent = useRef<string | null>(null)
 
   const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window
   const canListen = typeof window !== 'undefined' && !!getRec()
@@ -181,6 +193,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       const s = sRef.current
       if (!text || !(s.voice || opts?.force)) return
       const token = ++speakToken.current
+      lastSpoken.current = { text, at: Date.now() }
       player.current?.pause()
       if (canSpeak) window.speechSynthesis.cancel()
       let url = ''
@@ -553,6 +566,35 @@ export function EchoProvider({ children }: { children: ReactNode }) {
 
   const runRef = useRef<(text: string) => Promise<Message>>(async () => message(''))
 
+  /** Echo works on the real screens: open the right one, and fill in each detail as the user says it. */
+  const showOnScreen = useCallback((r: AssistantReply) => {
+    const kind = r.intent as FillKind | null
+    if (!kind || !['transfer', 'airtime', 'data', 'electricity'].includes(kind)) {
+      lastIntent.current = null
+      return
+    }
+    setAskOpen(false)
+    const n = nRef.current
+    if (lastIntent.current !== kind || r.status === 'collecting' && Object.keys(r.fields ?? {}).length === 0) {
+      markVoiceNavigation()
+      if (kind === 'transfer') n.startTransfer()
+      else if (kind === 'airtime' || kind === 'data') n.openRecharge(kind)
+      else n.openBill('electricity')
+    }
+    lastIntent.current = r.status === 'authorising' || r.status === 'done' ? null : kind
+    const f = r.fields ?? {}
+    const num = (v: unknown) => (typeof v === 'number' ? v : undefined)
+    const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
+    const discoLabel = r.checklist.find((c) => c.key === 'disco')?.value ?? ''
+    const values =
+      kind === 'transfer'
+        ? { account: str(f.account), bank: str(f.bank) ? bankNameFor(String(f.bank)) : undefined, name: str(f.name), amount: num(f.amount), note: str(f.note) }
+        : kind === 'electricity'
+          ? { provider: str(f.disco) ? discoNameFor(String(f.disco), discoLabel) : undefined, meter: str(f.meter), amount: num(f.amount) }
+          : { phone: str(f.phone), network: str(f.network), amount: num(f.amount), plan: str(f.plan) }
+    publishFill(kind, values, r.status === 'authorising')
+  }, [])
+
   const runAssistant = useCallback(
     async (heard: string | null, call: () => Promise<AssistantReply>): Promise<Message> => {
       let r: AssistantReply
@@ -578,15 +620,9 @@ export function EchoProvider({ children }: { children: ReactNode }) {
         alertUser('success')
       } else if (r.message.tone === 'error') alertUser('error')
       const m = message(text, speech, r.message.privateSpeech)
-      setAskOpen(true)
       setReply({ heard, message: m, assistant: r })
+      showOnScreen(r)
       await respond(m)
-      const s = sRef.current
-      const keepTalking = (r.status === 'collecting' || r.status === 'confirming') && s.voice && s.interaction === 'voice' && !!getRec() && micRef.current !== 'denied'
-      if (keepTalking && assistantRef.current === r) {
-        const next = await listen(9000)
-        if (next.text && assistantRef.current === r) await runRef.current(next.text)
-      }
       return m
     },
     [alertUser, listen, record, respond],
@@ -595,7 +631,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
   const runCommand = useCallback(
     async (text: string) => {
       const local = parseCommand(text)
-      const talking = inConversation(assistantRef.current)
+      const talking = inConversation(assistantRef.current) && assistantRef.current?.status !== 'authorising'
       const keepLocal = local && (talking ? ['lock', 'textSize', 'theme'] : ['stop', 'lock', 'textSize', 'theme']).includes(local.type)
       if (/\b(remain|elo lo ku|melo lo ku)\b/i.test(text) && !talking) return runRef.current('check my balance')
       if (!keepLocal && (talking || !local || wantsAssistant(text))) return runAssistant(text, () => talk(text))
@@ -639,24 +675,59 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     [listen, runCommand],
   )
 
-  // ---- "Hey Ziva": continuous listening while the app is open, only if the microphone is already allowed
+  // ---- Always listening while the app is open: "Hey Ziva", answers during a conversation, and "stop" to interrupt.
   const wakeOn = useRef(false)
   const wakePaused = useRef(false)
   const wakeRec = useRef<Rec | null>(null)
   const wakeTimer = useRef<number | undefined>(undefined)
-  const onWake = useRef<(rest: string) => void>(() => {})
-  onWake.current = (rest: string) => {
-    cue('listen')
-    buzz(30)
-    void (async () => {
-      if (rest) {
-        await runCommand(rest)
-        return
+  const onHeard = useRef<(text: string) => void>(() => {})
+
+  /** Our own voice coming back through the microphone: most of its words are in what Echo just said. */
+  const isOwnVoice = (text: string) => {
+    const said = lastSpoken.current
+    if (!said.text || Date.now() - said.at > 30000) return false
+    const spoken = new Set(words(said.text))
+    const heard = words(text)
+    if (!heard.length) return true
+    // Short answers like "yes" or "next" are the user replying, even if Echo just said those words.
+    if (heard.length < 4) return false
+    return heard.filter((w) => spoken.has(w)).length / heard.length >= 0.7
+  }
+
+  onHeard.current = (raw: string) => {
+    const text = raw.trim()
+    if (!text) return
+    const wake = WAKE.exec(text)
+    if (speakingRef.current) {
+      if (!wake && !STOP_WORDS.test(text)) return
+      stop()
+    } else if (!wake && isOwnVoice(text)) return
+
+    if (pinPadOpen() && (text.match(SPOKEN_DIGITS) ?? []).length >= 2) {
+      void say('Please don’t say your PIN out loud. Type it on the keypad.', { force: true })
+      return
+    }
+    if (wake) {
+      const rest = (wake[1] ?? '').trim()
+      cue('listen')
+      buzz(30)
+      if (rest) void runCommand(rest)
+      else {
+        awaiting.current = Date.now()
+        void say('Yes?', { force: true })
       }
-      await say('Yes?')
-      const r = await listen(8000)
-      if (r.text) await runCommand(r.text)
-    })()
+      return
+    }
+    if (STOP_WORDS.test(text) && !inConversation(assistantRef.current)) {
+      stop()
+      return
+    }
+    if (voiceHandler.current?.(text)) return
+    const talking = inConversation(assistantRef.current) && assistantRef.current?.status !== 'authorising'
+    if (talking || Date.now() - awaiting.current < 12000) {
+      awaiting.current = 0
+      void runCommand(text)
+    }
   }
 
   const stopWakeRec = useCallback(() => {
@@ -687,10 +758,10 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     rec.interimResults = false
     rec.maxAlternatives = 1
     rec.onresult = (e) => {
-      if (speakingRef.current) return // don't react to our own voice
       for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
-        const m = WAKE.exec(e.results[i][0].transcript)
-        if (m) onWake.current((m[1] ?? '').trim())
+        const result = e.results[i]
+        if (result.isFinal === false) continue
+        onHeard.current(result[0].transcript)
       }
     }
     rec.onerror = (e) => {
@@ -700,11 +771,11 @@ export function EchoProvider({ children }: { children: ReactNode }) {
         stopWakeRec()
       }
     }
-    // The browser ends continuous recognition every so often: start it again.
+    // The browser ends continuous recognition every so often: start it again straight away.
     rec.onend = () => {
       wakeRec.current = null
       setWakeActive(false)
-      if (wakeOn.current && !wakePaused.current) wakeTimer.current = window.setTimeout(() => void startWakeRec(), 700)
+      if (wakeOn.current && !wakePaused.current) wakeTimer.current = window.setTimeout(() => void startWakeRec(), 250)
     }
     wakeRec.current = rec
     try {
@@ -712,6 +783,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       setWakeActive(true)
     } catch {
       wakeRec.current = null
+      wakeTimer.current = window.setTimeout(() => void startWakeRec(), 1000)
     }
   }, [stopWakeRec])
 
@@ -721,18 +793,50 @@ export function EchoProvider({ children }: { children: ReactNode }) {
   }
   resumeWake.current = () => {
     wakePaused.current = false
-    if (wakeOn.current) wakeTimer.current = window.setTimeout(() => void startWakeRec(), 400)
+    if (wakeOn.current) wakeTimer.current = window.setTimeout(() => void startWakeRec(), 300)
   }
 
   useEffect(() => {
-    wakeOn.current = settings.wakeWord && nav.phase === 'app' && canListen
+    wakeOn.current = settings.wakeWord && canListen && mic !== 'denied'
     if (wakeOn.current) void startWakeRec()
     else stopWakeRec()
     return () => {
       wakeOn.current = false
       stopWakeRec()
     }
-  }, [settings.wakeWord, nav.phase, canListen, mic, startWakeRec, stopWakeRec])
+  }, [settings.wakeWord, canListen, mic, startWakeRec, stopWakeRec])
+
+  // Any touch or key press means the user has moved on: stop talking.
+  useEffect(() => {
+    const interrupt = () => {
+      if (speakingRef.current) stop()
+    }
+    window.addEventListener('pointerdown', interrupt, true)
+    window.addEventListener('keydown', interrupt, true)
+    return () => {
+      window.removeEventListener('pointerdown', interrupt, true)
+      window.removeEventListener('keydown', interrupt, true)
+    }
+  }, [stop])
+
+  const startListening = useCallback(() => {
+    stop()
+    if (wakeRec.current) {
+      awaiting.current = Date.now()
+      cue('listen')
+      buzz(30)
+      void say('Yes?', { force: true })
+      return
+    }
+    void (async () => {
+      const r = await listen(8000)
+      if (r.text) await runCommand(r.text)
+    })()
+  }, [stop, cue, buzz, say, listen, runCommand])
+
+  const setVoiceHandler = useCallback((handler: ((text: string) => boolean) | null) => {
+    voiceHandler.current = handler
+  }, [])
 
   const value = useMemo<Echo>(
     () => ({
@@ -744,8 +848,10 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       clearReply,
       chooseOption,
       approveAssistant,
+      startListening,
+      setVoiceHandler,
     }),
-    [caption, speaking, listening, wakeActive, canSpeak, canListen, mic, voices, reply, askOpen, flashKey, openAsk, unlock, say, respond, stop, listen, requestMic, cue, buzz, flash, alertUser, runCommand, feelBalance, headphones, showReply, clearReply, chooseOption, approveAssistant],
+    [caption, speaking, listening, wakeActive, canSpeak, canListen, mic, voices, reply, askOpen, flashKey, openAsk, unlock, say, respond, stop, listen, requestMic, cue, buzz, flash, alertUser, runCommand, feelBalance, headphones, showReply, clearReply, chooseOption, approveAssistant, startListening, setVoiceHandler],
   )
 
   return <C.Provider value={value}>{children}</C.Provider>

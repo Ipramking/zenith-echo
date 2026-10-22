@@ -18,6 +18,7 @@ import { SettingsProvider, useSettings } from './state/settings'
 import { StoreProvider } from './state/store'
 import { EchoProvider, useEcho } from './voice/echo'
 import { useTouchRead } from './voice/touchread'
+import { navigatedByVoice } from './voice/fill'
 
 function Screens() {
   const { phase, tab, page, resetKey } = useNav()
@@ -96,10 +97,11 @@ function useAppBehaviour() {
     if (phase !== 'app') return
     const e = echoRef.current
     let cancelled = false
+    if (navigatedByVoice()) return
     void (async () => {
       const onHome = tab === 'home' && !page
-      await e.say(onHome ? 'Home. What would you like to do? Say help to hear your options.' : name)
-      if (cancelled || !onHome || !settings.voice || !settings.autoListen || !e.canListen || e.mic === 'denied') return
+      await e.say(onHome ? 'Home. Say Hey Ziva, then what you want to do.' : name)
+      if (cancelled || !onHome || !settings.voice || !settings.autoListen || settings.wakeWord || !e.canListen || e.mic === 'denied') return
       const r = await e.listen(8000)
       if (!cancelled && r.text) await e.runCommand(r.text)
     })()

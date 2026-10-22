@@ -1,4 +1,5 @@
 import { badRequest, notFound, requireAmount, requireDigits } from '../errors.js'
+import { appName } from '../banking/directory.js'
 import { debit } from './ledger.js'
 
 export const NETWORKS = [
@@ -28,21 +29,22 @@ export const NETWORKS = [
   },
 ]
 
-const PLAN_TEMPLATES = [
-  { size: '500MB', validity: '1 day', price: 350 },
-  { size: '1GB', validity: '1 day', price: 500 },
-  { size: '2GB', validity: '7 days', price: 1500 },
-  { size: '5GB', validity: '30 days', price: 3500 },
-  { size: '10GB', validity: '30 days', price: 5500 },
-  { size: '20GB', validity: '30 days', price: 9000 },
-]
+const APP_PLANS = {
+  mtn: [['500MB', '7 days', 500], ['1.5GB', '30 days', 1000], ['3.2GB', '30 days', 2000], ['7GB', '30 days', 3500], ['11GB', '30 days', 5000], ['25GB', '30 days', 8000]],
+  airtel: [['600MB', '7 days', 500], ['1.5GB', '30 days', 1000], ['4GB', '30 days', 2000], ['8GB', '30 days', 3000], ['13GB', '30 days', 5000], ['25GB', '30 days', 7500]],
+  glo: [['1GB', '7 days', 500], ['2.9GB', '30 days', 1000], ['5.8GB', '30 days', 2000], ['10GB', '30 days', 3000], ['18GB', '30 days', 4500], ['29GB', '30 days', 8000]],
+  '9mobile': [['500MB', '30 days', 500], ['1.5GB', '30 days', 1000], ['4.5GB', '30 days', 2000], ['11GB', '30 days', 4000], ['15GB', '30 days', 5000], ['40GB', '30 days', 10000]],
+}
 
 export const DATA_PLANS = NETWORKS.flatMap((network) =>
-  PLAN_TEMPLATES.map((plan) => ({
-    id: `${network.id}-${plan.size.toLowerCase()}-${plan.validity.split(' ')[0]}d`,
+  APP_PLANS[network.id].map(([size, validity, price]) => ({
+    id: `${size}${validity}`,
+    appId: `${size}${validity}`,
     networkId: network.id,
-    label: `${plan.size} for ${plan.validity}`,
-    ...plan,
+    label: `${size} for ${validity}`,
+    size,
+    validity,
+    price,
   })),
 )
 
@@ -61,8 +63,19 @@ export const DISCOS = [
 
 const TARIFF_PER_KWH = 209.5
 
-const METER_HOLDERS = ['ADEWALE OKONKWO', 'GRACE EMEKA', 'FATIMA BELLO', 'TUNDE LAWAL', 'NGOZI EZE']
-const STREETS = ['12 Palm Avenue', '4 Unity Close', '27 Market Road', '9 Church Street', '15 Station Road']
+const APP_ADDRESSES = [
+  '12 Admiralty Way, Lekki Phase 1',
+  '4 Allen Avenue, Ikeja',
+  '27 Awolowo Road, Ikoyi',
+  '9 Bode Thomas Street, Surulere',
+  '31 Herbert Macaulay Way, Yaba',
+]
+
+function appAddress(id) {
+  let h = 0
+  for (const c of id) h = (h * 17 + c.charCodeAt(0)) >>> 0
+  return APP_ADDRESSES[h % APP_ADDRESSES.length]
+}
 
 export function normalisePhone(value) {
   let digits = String(value ?? '').replace(/\D/g, '')
@@ -129,16 +142,15 @@ function requireDisco(discoId) {
 }
 
 export function validateMeter({ meter, discoId }) {
-  const number = requireDigits(meter, 'Meter number', { min: 11, max: 13 })
+  const number = requireDigits(meter, 'Meter number', { min: 11 })
   const disco = requireDisco(discoId)
   if (number.startsWith('000')) throw notFound('Meter not found')
-  const seed = number.split('').reduce((sum, d) => sum + Number(d), 0)
   return {
     meter: number,
     discoId: disco.id,
     discoName: disco.name,
-    customerName: METER_HOLDERS[seed % METER_HOLDERS.length],
-    address: `${STREETS[Number(number.at(-1)) % STREETS.length]}, ${disco.area}`,
+    customerName: appName(number),
+    address: appAddress(number),
     meterType: 'prepaid',
   }
 }
