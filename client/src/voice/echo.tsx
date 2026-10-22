@@ -6,13 +6,27 @@ import { useStore } from '../state/store'
 import type { Receipt } from '../lib/types'
 import { approveWithPin, choose, inConversation, premiumSpeech, talk, wantsAssistant, type AssistantReceipt, type AssistantReply } from './assistant'
 import { HELP_LIST, parseCommand, type Dest } from './commands'
-import { bankNameFor, discoNameFor, markVoiceNavigation, pinPadOpen, publishFill, type FillKind } from './fill'
+import { bankNameFor, clearFill, closeOpenFlow, discoNameFor, markVoiceNavigation, pinPadOpen, publishFill, type FillKind } from './fill'
 import { canHear, hearOnce, wakeAudio, type Turn } from './capture'
 
 const RATE = { slow: 0.8, normal: 1, fast: 1.25 } as const
 /** "Hey Ziva", with a few spellings speech recognition tends to produce. Anything after it is the command. */
 const WAKE = /\b(?:(?:hey|hi|hello|okay|ok)[\s,]*)?(?:ziva|zeva|zeeva|ziba|zeeba|siva|seva|diva|viva|zifa)\b[\s,.!?]*(.*)$/i
 const STOP_WORDS = /^(stop|cancel|quiet|be quiet|wait|hold on|enough|shut up)\b/i
+const WHISPER = 0.2
+/** Leave whatever is happening and go to Home. */
+const GO_HOME = /^(?:please\s+)?(?:cancel|close|back|go back|home|go home|go to home|take me home|exit|quit)(?:\s+(?:it|this|that|the transaction|the transfer|the payment|please))?$/i
+const TASKS: [string, RegExp][] = [
+  ['airtime', /\b(airtime|recharge|top ?up)\b/i],
+  ['data', /\b(data|bundle|bundles)\b/i],
+  ['electricity', /\b(electricity|light bill|nepa|meter|prepaid)\b/i],
+  ['transfer', /\b(transfer|send money)\b/i],
+]
+/** "I want to buy data", "open airtime": a request to start a different task. */
+const taskIn = (t: string) =>
+  /\b(buy|want|open|go to|switch|make|pay for|start|i wan|abeg)\b/i.test(t) || t.split(/\s+/).length <= 2 ? (TASKS.find(([, re]) => re.test(t))?.[0] ?? null) : null
+const DIGIT = '(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)'
+const SENSITIVE = new RegExp(`₦|NGN|\\bnaira\\b|\\bkobo\\b|\\d[\\d, ]{2,}\\d|\\b(?:hundred|thousand|million)\\b|\\b${DIGIT}(?:[\\s,]+${DIGIT}){2,}\\b`, 'i')
 const SPOKEN_DIGITS = /\b(\d|zero|oh|one|two|three|four|five|six|seven|eight|nine)\b/gi
 
 export type Cue = 'success' | 'error' | 'info' | 'listen' | 'tick'
@@ -177,6 +191,36 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     }
   }, [canSpeak])
 
+  /** A sentence with money, a balance or an account number in it is whispered; the rest is said at normal volume. */
+  const partsOf = (text: string, volume: number | undefined, privacy: string) => {
+    if (volume !== undefined || privacy === 'headphones') return [{ text, volume: volume ?? 1 }]
+    const parts: { text: string; volume: number }[] = []
+    for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+      if (!sentence.trim()) continue
+      const v = SENSITIVE.test(sentence) ? WHISPER : 1
+      const last = parts[parts.length - 1]
+      if (last && last.volume === v) last.text += ' ' + sentence
+      else parts.push({ text: sentence, volume: v })
+    }
+    return parts.length ? parts : [{ text, volume: 1 }]
+  }
+
+  const clipFor = async (text: string): Promise<string> => {
+    try {
+      let clip = clips.current.get(text)
+      if (!clip) {
+        clip = await premiumSpeech(text)
+        if (text.length <= 160) {
+          if (clips.current.size > 80) clips.current.delete(clips.current.keys().next().value as string)
+          clips.current.set(text, clip)
+        }
+      }
+      return URL.createObjectURL(clip)
+    } catch {
+      return ''
+    }
+  }
+
   /** Speech only: no caption. Echo's server voice first; the phone's own voice only if the server can't be reached. */
   const speakToken = useRef(0)
   const speak = useCallback(
@@ -195,68 +239,56 @@ export function EchoProvider({ children }: { children: ReactNode }) {
         setSpeaking(false)
         kick(350)
       }
-      let url = ''
-      try {
-        let clip = clips.current.get(text)
-        if (!clip) {
-          clip = await premiumSpeech(text)
-          if (text.length <= 160) {
-            if (clips.current.size > 80) clips.current.delete(clips.current.keys().next().value as string)
-            clips.current.set(text, clip)
-          }
+      const parts = partsOf(text, opts?.volume, s.privacy)
+      const urls = await Promise.all(parts.map((p) => clipFor(p.text)))
+      const release = () => urls.forEach((u) => u && URL.revokeObjectURL(u))
+      for (let i = 0; i < parts.length; i++) {
+        if (token !== speakToken.current) {
+          release()
+          return
         }
-        url = URL.createObjectURL(clip)
-      } catch {
-        url = ''
-      }
-      if (token !== speakToken.current) {
-        if (url) URL.revokeObjectURL(url)
-        return
-      }
-      if (url) {
-        player.current?.pause()
-        const clip = new Audio(url)
-        player.current = clip
-        clip.volume = opts?.volume ?? 1
-        clip.playbackRate = RATE[s.speechRate]
+        const url = urls[i]
+        if (url) {
+          const clip = new Audio(url)
+          player.current = clip
+          clip.volume = parts[i].volume
+          clip.playbackRate = RATE[s.speechRate]
+          await new Promise<void>((resolve) => {
+            clip.onended = () => resolve()
+            clip.onerror = () => resolve()
+            clip.onpause = () => resolve()
+            clip.play().catch(() => resolve())
+          })
+          if (player.current === clip) player.current = null
+          continue
+        }
+        if (!canSpeak) continue
         await new Promise<void>((resolve) => {
-          clip.onended = () => resolve()
-          clip.onerror = () => resolve()
-          clip.onpause = () => resolve()
-          clip.play().catch(() => resolve())
+          const u = new SpeechSynthesisUtterance(parts[i].text)
+          const all = window.speechSynthesis.getVoices()
+          const chosen = (s.voiceName && all.find((v) => v.name === s.voiceName)) || all.find((v) => v.lang === 'en-NG') || all.find((v) => v.lang.startsWith('en-GB')) || all.find((v) => v.lang.startsWith('en'))
+          if (chosen) u.voice = chosen
+          u.lang = chosen?.lang ?? 'en-GB'
+          u.rate = RATE[s.speechRate]
+          u.volume = parts[i].volume
+          let done = false
+          const finish = () => {
+            if (done) return
+            done = true
+            window.clearTimeout(guard)
+            resolve()
+          }
+          // Some browsers never fire onend (no voices installed); don't hang the caller.
+          const guard = window.setTimeout(finish, 1800 + (parts[i].text.length * 95) / u.rate)
+          u.onend = finish
+          u.onerror = finish
+          window.speechSynthesis.speak(u)
         })
-        URL.revokeObjectURL(url)
-        if (player.current === clip) player.current = null
-        finished()
-        return
       }
-      if (!canSpeak) {
-        finished()
-        return
-      }
-      return new Promise<void>((resolve) => {
-        const u = new SpeechSynthesisUtterance(text)
-        const all = window.speechSynthesis.getVoices()
-        const chosen = (s.voiceName && all.find((v) => v.name === s.voiceName)) || all.find((v) => v.lang === 'en-NG') || all.find((v) => v.lang.startsWith('en-GB')) || all.find((v) => v.lang.startsWith('en'))
-        if (chosen) u.voice = chosen
-        u.lang = chosen?.lang ?? 'en-GB'
-        u.rate = RATE[s.speechRate]
-        u.volume = opts?.volume ?? 1
-        let done = false
-        const finish = () => {
-          if (done) return
-          done = true
-          window.clearTimeout(guard)
-          finished()
-          resolve()
-        }
-        // Some browsers never fire onend (no voices installed); don't hang the caller.
-        const guard = window.setTimeout(finish, 1800 + (text.length * 95) / u.rate)
-        u.onend = finish
-        u.onerror = finish
-        window.speechSynthesis.speak(u)
-      })
+      release()
+      finished()
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [canSpeak, kick],
   )
 
@@ -350,7 +382,6 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const speakReply = useCallback((text: string, volume = 1) => speak(text, { volume, force: true }), [speak])
 
   /**
    * Every reply: show message.text as a caption. With headphones on, play message.speech. In whisper mode, play
@@ -361,11 +392,11 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       if (opts?.caption !== false || sRef.current.captions) showCaption(m.text)
       const privacy = sRef.current.privacy
       const onHeadphones = privacy === 'headphones' || (await headphones()) === true
-      if (onHeadphones) await speakReply(m.speech)
-      else if (privacy === 'whisper') await speakReply(m.speech, 0.55)
-      else await speakReply(m.privateSpeech)
+      if (onHeadphones) await speak(m.speech, { force: true, volume: 1 })
+      else if (privacy === 'whisper') await speak(m.speech, { force: true })
+      else await speak(m.privateSpeech, { force: true })
     },
-    [headphones, showCaption, speakReply],
+    [headphones, showCaption, speak],
   )
 
   // ---- microphone + one-shot recognition
@@ -690,7 +721,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
         await say('Yes?', { force: true })
         return
       }
-    } else if (mode === 'wake' && !parseCommand(text) && !wantsAssistant(text)) return
+    } else if (mode === 'wake' && !parseCommand(text) && !wantsAssistant(text) && !GO_HOME.test(text) && !taskIn(text)) return
     window.dispatchEvent(new Event('echo-activity'))
     awaitUntil.current = 0
 
@@ -700,6 +731,24 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       await say('Sorry, I didn’t catch that. Please say it again.', { force: true })
       return
     }
+
+    if (GO_HOME.test(command)) {
+      await goHome()
+      return
+    }
+
+    const task = taskIn(command)
+    const current = assistantRef.current
+    if (task && current && (conversing() || current.status === 'authorising') && (current.intent !== task || current.status === 'authorising')) {
+      try {
+        assistantRef.current = await talk('cancel')
+      } catch {
+        /* a fresh request starts a new task anyway */
+      }
+      lastIntent.current = null
+      closeOpenFlow()
+      clearFill()
+    } else if (task) closeOpenFlow()
 
     if (STOP_WORDS.test(command) && !conversing()) {
       await say('Okay.', { force: true })
@@ -711,6 +760,28 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     await say(heardBack(command), { force: true })
     const m = await job
     if (m.text || m.speech) await respond(m)
+  }
+
+  const goHome = async () => {
+    const wasPaying = conversing()
+    if (wasPaying || assistantRef.current?.status === 'authorising') {
+      try {
+        assistantRef.current = await talk('cancel')
+      } catch {
+        assistantRef.current = null
+      }
+    }
+    lastIntent.current = null
+    closeOpenFlow()
+    clearFill()
+    setAskOpen(false)
+    markVoiceNavigation()
+    const n = nRef.current
+    if (n.page) n.closePage()
+    n.setTab('home')
+    const m = message(wasPaying ? 'Cancelled. Nothing was sent. You are on Home. What would you like to do next?' : 'You are on Home. What would you like to do next?')
+    setReply({ heard: null, message: m })
+    await respond(m)
   }
 
   cycleRef.current = async () => {

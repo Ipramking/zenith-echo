@@ -1,8 +1,9 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { genRef, genToken } from '../lib/format'
 import type { Intent, Receipt } from '../lib/types'
 import { useNav } from './nav'
 import { useStore } from './store'
+import { setFlowCloser } from '../voice/fill'
 
 export type Stage = 'confirm' | 'auth' | 'countdown' | 'processing' | 'success' | 'receipt'
 
@@ -44,6 +45,18 @@ export function FlowProvider({ children }: { children: ReactNode }) {
     ref.current = f
     setFlow(f)
   }, [])
+
+  useEffect(() => {
+    setFlowCloser(() => {
+      const open = !!ref.current
+      if (open) {
+        set(null)
+        api.current.bump()
+      }
+      return open
+    })
+    return () => setFlowCloser(null)
+  }, [set])
 
   const value = useMemo<Flow>(
     () => ({
