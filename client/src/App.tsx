@@ -84,7 +84,7 @@ function useAppBehaviour() {
       window.clearTimeout(t)
       t = window.setTimeout(lock, limit)
     }
-    const events = ['pointerdown', 'keydown', 'scroll', 'touchstart'] as const
+    const events = ['pointerdown', 'keydown', 'scroll', 'touchstart', 'echo-activity'] as const
     events.forEach((e) => window.addEventListener(e, reset, { capture: true, passive: true }))
     return () => {
       window.clearTimeout(t)
@@ -100,7 +100,7 @@ function useAppBehaviour() {
     if (navigatedByVoice()) return
     void (async () => {
       const onHome = tab === 'home' && !page
-      await e.say(onHome ? 'Home. Say Hey Ziva, then what you want to do.' : name)
+      await e.say(onHome ? 'Home. What would you like to do? Say send money, buy airtime, or buy data.' : name)
       if (cancelled || !onHome || !settings.voice || !settings.autoListen || settings.wakeWord || !e.canListen || e.mic === 'denied') return
       const r = await e.listen(8000)
       if (!cancelled && r.text) await e.runCommand(r.text)
