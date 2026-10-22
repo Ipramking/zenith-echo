@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
         "dev": "node --watch-path=src --watch-preserve-output --env-file=.env src/index.js",
-    "start": "node --env-file=.env src/index.js",
+            "start": "node --env-file-if-exists=.env src/index.js",
       "smoke": "node scripts/smoke.js",
           "voice": "node scripts/voice-check.js",
               "assistant": "node scripts/assistant-check.js",
@@ -15,6 +15,7 @@
   "license": "ISC",
   "description": "",
   "type": "module",
+    "engines": { "node": ">=22" },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0"
