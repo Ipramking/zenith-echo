@@ -201,10 +201,11 @@ The security check deliberately locks the PIN at the end. Restart the server aft
 We used AI tools during this build and want to be clear about how.
 
 - **Frontend:** the banking app's interface (screens, layout, setup flow, Settings page and components) was generated with AI and then reviewed, adjusted and integrated by the team.
-- **Backend and integration:** the developer designed the system, decided the features, security rules and conversation behaviour, and directed, assembled, tested and deployed every part. AI was used as a pair programmer to help write and debug the code.
-- **Auditing:** AI was used to review the Website and its structure alone. It Github repo was not sent to the ai for audit.
+- **Backend and integration:** the developer designed the system, decided the features, security rules and conversation behaviour, and directed, assembled, tested and deployed every part. 
+- **Auditing:** AI was used to review the Website and its structure alone. The Github repo was not sent to the ai for audit.
 - **Research:** AI was used to research accessibility practice (TalkBack, WCAG 2.2), and the CBN NUBAN check-digit rule.
 - **Readme:** Ai  was use to get a template for the Readme based on what it knows from the auditand was edited and finalized by the Dev.
+- **The AI Used:** Claude and Chatgpt. Claude to assist with the frontend and Chatgpt for website feedback, review and research.
 
 All product decisions, testing on devices and the final submission are the team's own.
 
