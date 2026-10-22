@@ -19,16 +19,16 @@ const stepsFor = (p: ProfileId): StepId[] => ORDER.filter((s) => !(s === 'displa
 /** Steps before the profile is applied are always spoken, because spoken guidance may not be on yet. */
 const ALWAYS_SPOKEN: StepId[] = ['mode', 'profile', 'extras']
 
-const SAMPLE = "Hello, I'm Echo, your Zenith banking assistant. Can you hear me clearly? Say yes, or say louder."
+const SAMPLE = "Hello, I'm Echo. Can you hear me clearly? Say yes, or say louder."
 
 const PROMPT: Record<Exclude<StepId, 'welcome' | 'hear'>, (touch: boolean, tremor: boolean) => string> = {
   mode: () => 'How do you want to use Echo? Voice, or Touch and read.',
   profile: () => 'Choose your main profile: blind or low vision, or standard.',
-  extras: () => 'Anything that would help? Say hard of hearing, tremors, or simple words. Then say next. Or say none.',
+  extras: () => 'Anything else that would help? Say hard of hearing, tremors, or simple words. Or say next.',
   mic: () => 'Echo needs your microphone to hear you. Tap Allow microphone, or skip.',
   privacy: () => 'Privacy mode. Normal, Whisper or Headphones. This decides how Echo says your balance and other private details.',
   display: () => 'Choose your text size and theme.',
-  secure: () => 'Create a 4-digit PIN. Type it on the keypad yourself. Never say your PIN out loud.',
+  secure: () => 'Now type a 4-digit PIN on the keypad. Never say it out loud.',
   practice: (touch, tremor) => (tremor ? 'Practice. Press and hold the button until it fills.' : touch ? 'Practice. Tap once to hear a button. Tap it twice to use it.' : 'Practice. Try saying: check my balance.'),
   ready: () => "You're ready. Say help anytime.",
 }
@@ -83,9 +83,23 @@ export function Onboarding() {
     setTab(replay ? 'more' : 'home')
   }
 
-  // Hands-free setup: saying what is on a button presses it.
+  // Hands-free setup: saying what is on a button presses it, and Echo says what changed.
+  const echoRef = useRef(echo)
+  echoRef.current = echo
   useEffect(() => {
-    echo.setVoiceHandler((text) => clickByVoice(text, document.querySelector('.ob') ?? document))
+    echo.setVoiceHandler((text) => {
+      const pressed = clickByVoice(text, document.querySelector('.ob') ?? document)
+      if (!pressed) return false
+      const role = pressed.getAttribute('role')
+      if (role === 'checkbox' || role === 'radio') {
+        window.setTimeout(() => {
+          const name = (pressed.querySelector('b')?.textContent ?? pressed.textContent ?? '').trim()
+          const on = pressed.getAttribute('aria-checked') === 'true'
+          void echoRef.current.say(`${name}, ${on ? 'selected' : 'removed'}. Say next when you are ready.`, { force: true })
+        }, 120)
+      }
+      return true
+    })
     return () => echo.setVoiceHandler(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

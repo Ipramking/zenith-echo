@@ -5,7 +5,7 @@ const SYNONYMS: [RegExp, RegExp][] = [
   [/\b(louder|slower|can't hear|cannot hear|too fast|repeat)\b/i, /louder|slower/i],
   [/\b(captions?|read|text)\b/i, /captions/i],
   [/^(no|none|nothing|nope|none of these|no thanks)\b/i, /none of these|^skip$/i],
-  [/^(next|continue|done|go on|move on|okay|ok|that's all|finish)\b/i, /^(next|continue|done|go to home)/i],
+  [/^(next|continue|done|go on|move on|okay|ok|that's all|that is all|finish|proceed)\b/i, /^(next|continue|done|go to home|none of these|keep my pin)/i],
   [/^(skip)\b/i, /^skip$/i],
   [/^(back|go back|previous)\b/i, /^back$/i],
   [/\b(hard of hearing|deaf|hearing)\b/i, /hard of hearing/i],
@@ -13,7 +13,7 @@ const SYNONYMS: [RegExp, RegExp][] = [
   [/\b(simple|plain|easy) words?\b/i, /simple words/i],
 ]
 
-const nameOf = (el: HTMLElement) => (el.getAttribute('aria-label') || el.innerText || '').replace(/\s+/g, ' ').trim()
+const nameOf = (el: HTMLElement) => (el.getAttribute('aria-label') || el.querySelector('b')?.textContent || el.innerText || '').replace(/\s+/g, ' ').trim()
 const tokens = (t: string) =>
   t
     .toLowerCase()
@@ -21,20 +21,20 @@ const tokens = (t: string) =>
     .split(/\s+/)
     .filter((w) => w && !IGNORE.has(w))
 
-/** Hands-free: say what is written on a button and Echo presses it. Returns true if it pressed one. */
-export function clickByVoice(spoken: string, root: ParentNode = document): boolean {
+/** Hands-free: say what is written on a button and Echo presses it. Returns the button it pressed. */
+export function clickByVoice(spoken: string, root: ParentNode = document): HTMLElement | null {
   // Never press PIN keys by voice: a PIN is only ever typed.
   const buttons = Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled])')).filter(
     (b) => b.offsetParent !== null && !b.closest('.pinpad, .keypad'),
   )
-  if (!buttons.length) return false
+  if (!buttons.length) return null
 
   for (const [said, target] of SYNONYMS) {
     if (!said.test(spoken)) continue
     const match = buttons.find((b) => target.test(nameOf(b)))
     if (match) {
       match.click()
-      return true
+      return match
     }
   }
 
@@ -52,7 +52,7 @@ export function clickByVoice(spoken: string, root: ParentNode = document): boole
   }
   if (best && bestScore >= 0.5) {
     best.click()
-    return true
+    return best
   }
-  return false
+  return null
 }

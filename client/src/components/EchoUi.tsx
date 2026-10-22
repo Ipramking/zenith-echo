@@ -2,7 +2,7 @@ import { Check, Mic, Send } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { PinPad } from './PinPad'
 import { HELP_LIST } from '../voice/commands'
-import { message, useEcho } from '../voice/echo'
+import { useEcho } from '../voice/echo'
 import { useSettings } from '../state/settings'
 import { Sheet } from './Parts'
 
@@ -166,20 +166,13 @@ export function EchoOrb() {
   const clear = echo.clearReply
   useEffect(() => clear(), [clear])
 
-  const tap = async () => {
-    if (listening) return
+  const tap = () => {
     echo.clearReply()
     if (!canListen || mic === 'denied') {
-      echo.openAsk(false) // no speech recognition here: type a command instead
+      echo.openAsk(false)
       return
     }
-    const r = await echo.listen(8000)
-    if (r.text) await echo.runCommand(r.text)
-    else {
-      const m = message(r.error === 'not-allowed' ? 'The microphone is blocked. Use the keyboard instead.' : "I didn't catch that. Tap and try again.")
-      echo.showReply(null, m)
-      void echo.respond(m)
-    }
+    echo.startListening()
   }
 
   return (

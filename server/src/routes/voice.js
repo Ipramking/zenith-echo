@@ -4,7 +4,7 @@ import { createRealtimeToken, listVoices, speak, transcribe } from '../services/
 
 const router = Router()
 
-router.use(rateLimit({ windowMs: 60000, max: 60 }))
+router.use(rateLimit({ windowMs: 60000, max: 300 }))
 
 router.post('/token', async (req, res) => {
   res.json(await createRealtimeToken())

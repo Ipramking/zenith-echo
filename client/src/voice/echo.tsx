@@ -7,34 +7,13 @@ import type { Receipt } from '../lib/types'
 import { approveWithPin, choose, inConversation, premiumSpeech, talk, wantsAssistant, type AssistantReceipt, type AssistantReply } from './assistant'
 import { HELP_LIST, parseCommand, type Dest } from './commands'
 import { bankNameFor, discoNameFor, markVoiceNavigation, pinPadOpen, publishFill, type FillKind } from './fill'
-
-// Minimal typings: SpeechRecognition isn't in TypeScript's DOM lib yet.
-interface RecResult { 0: { transcript: string }; isFinal?: boolean }
-interface RecEvent { resultIndex?: number; results: ArrayLike<RecResult> }
-interface Rec {
-  lang: string
-  continuous: boolean
-  interimResults: boolean
-  maxAlternatives: number
-  onresult: ((e: RecEvent) => void) | null
-  onerror: ((e: { error: string }) => void) | null
-  onend: (() => void) | null
-  start: () => void
-  stop: () => void
-  abort: () => void
-}
-type RecCtor = new () => Rec
-const getRec = (): RecCtor | null => {
-  const w = window as unknown as { SpeechRecognition?: RecCtor; webkitSpeechRecognition?: RecCtor }
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
-}
+import { canHear, hearOnce, wakeAudio, type Turn } from './capture'
 
 const RATE = { slow: 0.8, normal: 1, fast: 1.25 } as const
 /** "Hey Ziva", with a few spellings speech recognition tends to produce. Anything after it is the command. */
 const WAKE = /\b(?:(?:hey|hi|hello|okay|ok)[\s,]*)?(?:ziva|zeva|zeeva|ziba|zeeba|siva|seva|diva|viva|zifa)\b[\s,.!?]*(.*)$/i
 const STOP_WORDS = /^(stop|cancel|quiet|be quiet|wait|hold on|enough|shut up)\b/i
 const SPOKEN_DIGITS = /\b(\d|zero|oh|one|two|three|four|five|six|seven|eight|nine)\b/gi
-const words = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
 
 export type Cue = 'success' | 'error' | 'info' | 'listen' | 'tick'
 export interface ListenResult { text: string | null; error?: string }
@@ -110,15 +89,6 @@ function balancePattern(balance: number): number[] {
   return p
 }
 
-async function micPermission(): Promise<'granted' | 'denied' | 'prompt' | 'unknown'> {
-  try {
-    const r = await navigator.permissions?.query({ name: 'microphone' as PermissionName })
-    return r?.state ?? 'unknown'
-  } catch {
-    return 'unknown'
-  }
-}
-
 export function EchoProvider({ children }: { children: ReactNode }) {
   const { settings, update, verifyPin } = useSettings()
   const verifyRef = useRef(verifyPin)
@@ -151,13 +121,32 @@ export function EchoProvider({ children }: { children: ReactNode }) {
   micRef.current = mic
   const player = useRef<HTMLAudioElement | null>(null)
   const assistantRef = useRef<AssistantReply | null>(null)
-  const lastSpoken = useRef({ text: '', at: 0 })
-  const awaiting = useRef(0)
   const voiceHandler = useRef<((text: string) => boolean) | null>(null)
   const lastIntent = useRef<string | null>(null)
 
   const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window
-  const canListen = typeof window !== 'undefined' && !!getRec()
+  const canListen = typeof window !== 'undefined' && canHear()
+
+  // Turn taking: Echo never listens while it is talking. When it finishes, the microphone opens for the user's turn.
+  const turnRef = useRef<Turn | null>(null)
+  const busy = useRef(false)
+  const manual = useRef(false)
+  const unlocked = useRef(false)
+  const awaitUntil = useRef(0)
+  const nudged = useRef(false)
+  const handsFree = useRef(false)
+  const kickTimer = useRef<number | undefined>(undefined)
+  const cycleRef = useRef<() => Promise<void>>(async () => {})
+  const kick = useCallback((delay = 250) => {
+    window.clearTimeout(kickTimer.current)
+    kickTimer.current = window.setTimeout(() => void cycleRef.current(), delay)
+  }, [])
+  const endTurn = () => {
+    const t = turnRef.current
+    turnRef.current = null
+    t?.abort()
+  }
+  const clips = useRef(new Map<string, Blob>())
 
   useEffect(() => {
     if (!canSpeak) return
@@ -176,6 +165,8 @@ export function EchoProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const unlock = useCallback(() => {
+    unlocked.current = true
+    wakeAudio()
     if (!canSpeak) return
     try {
       const u = new SpeechSynthesisUtterance(' ')
@@ -193,12 +184,28 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       const s = sRef.current
       if (!text || !(s.voice || opts?.force)) return
       const token = ++speakToken.current
-      lastSpoken.current = { text, at: Date.now() }
+      endTurn()
+      speakingRef.current = true
+      setSpeaking(true)
       player.current?.pause()
       if (canSpeak) window.speechSynthesis.cancel()
+      const finished = () => {
+        if (token !== speakToken.current) return
+        speakingRef.current = false
+        setSpeaking(false)
+        kick(350)
+      }
       let url = ''
       try {
-        url = URL.createObjectURL(await premiumSpeech(text))
+        let clip = clips.current.get(text)
+        if (!clip) {
+          clip = await premiumSpeech(text)
+          if (text.length <= 160) {
+            if (clips.current.size > 80) clips.current.delete(clips.current.keys().next().value as string)
+            clips.current.set(text, clip)
+          }
+        }
+        url = URL.createObjectURL(clip)
       } catch {
         url = ''
       }
@@ -212,8 +219,6 @@ export function EchoProvider({ children }: { children: ReactNode }) {
         player.current = clip
         clip.volume = opts?.volume ?? 1
         clip.playbackRate = RATE[s.speechRate]
-        speakingRef.current = true
-        setSpeaking(true)
         await new Promise<void>((resolve) => {
           clip.onended = () => resolve()
           clip.onerror = () => resolve()
@@ -222,13 +227,13 @@ export function EchoProvider({ children }: { children: ReactNode }) {
         })
         URL.revokeObjectURL(url)
         if (player.current === clip) player.current = null
-        if (token === speakToken.current) {
-          speakingRef.current = false
-          setSpeaking(false)
-        }
+        finished()
         return
       }
-      if (!canSpeak) return
+      if (!canSpeak) {
+        finished()
+        return
+      }
       return new Promise<void>((resolve) => {
         const u = new SpeechSynthesisUtterance(text)
         const all = window.speechSynthesis.getVoices()
@@ -242,20 +247,17 @@ export function EchoProvider({ children }: { children: ReactNode }) {
           if (done) return
           done = true
           window.clearTimeout(guard)
-          speakingRef.current = false
-          setSpeaking(false)
+          finished()
           resolve()
         }
         // Some browsers never fire onend (no voices installed); don't hang the caller.
         const guard = window.setTimeout(finish, 1800 + (text.length * 95) / u.rate)
         u.onend = finish
         u.onerror = finish
-        speakingRef.current = true
-        setSpeaking(true)
         window.speechSynthesis.speak(u)
       })
     },
-    [canSpeak],
+    [canSpeak, kick],
   )
 
   const say = useCallback(
@@ -271,9 +273,11 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     player.current?.pause()
     player.current = null
     if (canSpeak) window.speechSynthesis.cancel()
+    const wasSpeaking = speakingRef.current
     speakingRef.current = false
     setSpeaking(false)
-  }, [canSpeak])
+    if (wasSpeaking) kick(400)
+  }, [canSpeak, kick])
 
   // ---- sound, vibration, flash
   const tone = useCallback((freq: number, ms: number, at = 0) => {
@@ -346,7 +350,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const speakReply = useCallback((text: string, volume = 1) => speak(text, { volume }), [speak])
+  const speakReply = useCallback((text: string, volume = 1) => speak(text, { volume, force: true }), [speak])
 
   /**
    * Every reply: show message.text as a caption. With headphones on, play message.speech. In whisper mode, play
@@ -358,7 +362,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       const privacy = sRef.current.privacy
       const onHeadphones = privacy === 'headphones' || (await headphones()) === true
       if (onHeadphones) await speakReply(m.speech)
-      else if (privacy === 'whisper') await speakReply(m.speech, 0.15)
+      else if (privacy === 'whisper') await speakReply(m.speech, 0.55)
       else await speakReply(m.privateSpeech)
     },
     [headphones, showCaption, speakReply],
@@ -377,55 +381,36 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Only one recognizer can run at a time, so the "Hey Ziva" one steps aside while a command is being listened for.
-  const pauseWake = useRef<() => void>(() => {})
-  const resumeWake = useRef<() => void>(() => {})
-
+  /** One turn of listening outside the conversation (a test button, for example). */
   const listen = useCallback(
-    (timeoutMs = 9000) =>
-      new Promise<ListenResult>((resolve) => {
-        const Rec = getRec()
-        if (!Rec) return resolve({ text: null, error: 'unsupported' })
-        if (listeningRef.current) return resolve({ text: null, error: 'busy' })
-        if (canSpeak) window.speechSynthesis.cancel() // don't hear ourselves
-        pauseWake.current()
-        const rec = new Rec()
-        rec.lang = 'en-NG'
-        rec.continuous = false
-        rec.interimResults = false
-        rec.maxAlternatives = 1
-        let finished = false
-        const done = (r: ListenResult) => {
-          if (finished) return
-          finished = true
-          window.clearTimeout(timer)
-          listeningRef.current = false
-          setListening(false)
-          try {
-            rec.stop()
-          } catch {
-            /* already stopped */
-          }
-          resumeWake.current()
-          resolve(r)
-        }
-        const timer = window.setTimeout(() => done({ text: null, error: 'timeout' }), timeoutMs)
-        rec.onresult = (e) => done({ text: e.results[0]?.[0]?.transcript ?? null })
-        rec.onerror = (e) => {
-          if (e.error === 'not-allowed' || e.error === 'service-not-allowed') setMic('denied')
-          done({ text: null, error: e.error })
-        }
-        rec.onend = () => done({ text: null, error: 'no-speech' })
-        listeningRef.current = true
-        setListening(true)
-        cue('listen')
-        try {
-          rec.start()
-        } catch {
-          done({ text: null, error: 'start-failed' })
-        }
-      }),
-    [canSpeak, cue],
+    async (timeoutMs = 9000): Promise<ListenResult> => {
+      if (!canListen) return { text: null, error: 'unsupported' }
+      if (manual.current) return { text: null, error: 'busy' }
+      unlocked.current = true
+      wakeAudio()
+      speakToken.current += 1
+      player.current?.pause()
+      if (canSpeak) window.speechSynthesis.cancel()
+      speakingRef.current = false
+      setSpeaking(false)
+      endTurn()
+      manual.current = true
+      listeningRef.current = true
+      setListening(true)
+      buzz(30)
+      const turn = hearOnce(timeoutMs)
+      turnRef.current = turn
+      const h = await turn.result
+      if (turnRef.current === turn) turnRef.current = null
+      manual.current = false
+      listeningRef.current = false
+      setListening(false)
+      if (h.error === 'denied') setMic('denied')
+      kick(800)
+      return { text: h.text, error: h.error }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canListen, canSpeak, kick],
   )
 
   const feelBalance = useCallback(() => {
@@ -434,14 +419,14 @@ export function EchoProvider({ children }: { children: ReactNode }) {
 
   // ---- commands. Voice can open screens and fill a form, but never approves a payment.
   const execute = useCallback(
-    async (input: string): Promise<Message> => {
+    async (input: string, quiet = false): Promise<Message> => {
       const cmd = parseCommand(input)
       const n = nRef.current
       const st = stRef.current
       const s = sRef.current
       const simple = s.extras.includes('simpleWords')
       const out = async (m: Message) => {
-        await respond(m)
+        if (!quiet) await respond(m)
         return m
       }
       const plain = (normal: string, easy: string) => message(simple ? easy : normal)
@@ -564,7 +549,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     return acct.balance - r.amount
   }, [])
 
-  const runRef = useRef<(text: string) => Promise<Message>>(async () => message(''))
+  const runRef = useRef<(text: string, quiet?: boolean) => Promise<Message>>(async () => message(''))
 
   /** Echo works on the real screens: open the right one, and fill in each detail as the user says it. */
   const showOnScreen = useCallback((r: AssistantReply) => {
@@ -596,7 +581,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const runAssistant = useCallback(
-    async (heard: string | null, call: () => Promise<AssistantReply>): Promise<Message> => {
+    async (heard: string | null, call: () => Promise<AssistantReply>, quiet = false): Promise<Message> => {
       let r: AssistantReply
       try {
         r = await call()
@@ -605,7 +590,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
         const m = message(/fetch|network/i.test(reason) ? 'I can’t reach Echo right now. Check your internet connection and try again.' : reason || 'Something went wrong.')
         setReply({ heard, message: m, assistant: assistantRef.current ?? undefined })
         alertUser('error')
-        await respond(m)
+        if (!quiet) await respond(m)
         return m
       }
       assistantRef.current = r
@@ -622,20 +607,20 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       const m = message(text, speech, r.message.privateSpeech)
       setReply({ heard, message: m, assistant: r })
       showOnScreen(r)
-      await respond(m)
+      if (!quiet) await respond(m)
       return m
     },
-    [alertUser, listen, record, respond],
+    [alertUser, record, respond, showOnScreen],
   )
 
   const runCommand = useCallback(
-    async (text: string) => {
+    async (text: string, quiet = false) => {
       const local = parseCommand(text)
       const talking = inConversation(assistantRef.current) && assistantRef.current?.status !== 'authorising'
       const keepLocal = local && (talking ? ['lock', 'textSize', 'theme'] : ['stop', 'lock', 'textSize', 'theme']).includes(local.type)
-      if (/\b(remain|elo lo ku|melo lo ku)\b/i.test(text) && !talking) return runRef.current('check my balance')
-      if (!keepLocal && (talking || !local || wantsAssistant(text))) return runAssistant(text, () => talk(text))
-      const m = await execute(text)
+      if (/\b(remain|elo lo ku|melo lo ku)\b/i.test(text) && !talking) return runRef.current('check my balance', quiet)
+      if (!keepLocal && (talking || !local || wantsAssistant(text))) return runAssistant(text, () => talk(text), quiet)
+      const m = await execute(text, quiet)
       setReply({ heard: text, message: m })
       return m
     },
@@ -664,7 +649,7 @@ export function EchoProvider({ children }: { children: ReactNode }) {
     (listenNow?: boolean) => {
       setAskOpen(true)
       setReply(null)
-      if (listenNow && getRec()) {
+      if (listenNow && canListen) {
         void (async () => {
           const r = await listen(8000)
           if (r.text) await runCommand(r.text)
@@ -672,143 +657,127 @@ export function EchoProvider({ children }: { children: ReactNode }) {
         })()
       }
     },
-    [listen, runCommand],
+    [canListen, listen, runCommand],
   )
 
-  // ---- Always listening while the app is open: "Hey Ziva", answers during a conversation, and "stop" to interrupt.
-  const wakeOn = useRef(false)
-  const wakePaused = useRef(false)
-  const wakeRec = useRef<Rec | null>(null)
-  const wakeTimer = useRef<number | undefined>(undefined)
-  const onHeard = useRef<(text: string) => void>(() => {})
+  // ---- The conversation loop, like a live voice chat: Echo speaks with the microphone off, then the microphone
+  // opens for the user's turn, Echo says what it heard while it acts on it, answers, and the microphone opens again.
+  const conversing = () => inConversation(assistantRef.current) && assistantRef.current?.status !== 'authorising'
 
-  /** Our own voice coming back through the microphone: most of its words are in what Echo just said. */
-  const isOwnVoice = (text: string) => {
-    const said = lastSpoken.current
-    if (!said.text || Date.now() - said.at > 30000) return false
-    const spoken = new Set(words(said.text))
-    const heard = words(text)
-    if (!heard.length) return true
-    // Short answers like "yes" or "next" are the user replying, even if Echo just said those words.
-    if (heard.length < 4) return false
-    return heard.filter((w) => spoken.has(w)).length / heard.length >= 0.7
+  const modeNow = (): 'reply' | 'wake' | 'off' => {
+    if (!unlocked.current || !canListen || micRef.current === 'denied') return 'off'
+    if (manual.current || busy.current || speakingRef.current || pinPadOpen()) return 'off'
+    if (conversing() || voiceHandler.current || Date.now() < awaitUntil.current) return 'reply'
+    return handsFree.current ? 'wake' : 'off'
   }
 
-  onHeard.current = (raw: string) => {
-    const text = raw.trim()
+  const heardBack = (t: string) => (t.split(/\s+/).length <= 10 ? `I heard: ${t}.` : 'Okay, one moment.')
+
+  const handle = async (raw: string, mode: 'reply' | 'wake') => {
+    const text = raw.trim().replace(/[.!?]+$/, '')
     if (!text) return
-    const wake = WAKE.exec(text)
-    if (speakingRef.current) {
-      if (!wake && !STOP_WORDS.test(text)) return
-      stop()
-    } else if (!wake && isOwnVoice(text)) return
-
     if (pinPadOpen() && (text.match(SPOKEN_DIGITS) ?? []).length >= 2) {
-      void say('Please don’t say your PIN out loud. Type it on the keypad.', { force: true })
+      await say('Please don’t say your PIN out loud. Type it on the keypad.', { force: true })
       return
     }
+    const wake = WAKE.exec(text)
+    let command = text
     if (wake) {
-      const rest = (wake[1] ?? '').trim()
-      cue('listen')
+      command = (wake[1] ?? '').trim()
       buzz(30)
-      if (rest) void runCommand(rest)
-      else {
-        awaiting.current = Date.now()
-        void say('Yes?', { force: true })
+      if (!command) {
+        awaitUntil.current = Date.now() + 15000
+        await say('Yes?', { force: true })
+        return
       }
+    } else if (mode === 'wake') return
+    awaitUntil.current = 0
+
+    if (voiceHandler.current) {
+      setReply({ heard: command, message: message('') })
+      if (voiceHandler.current(command)) return
+      await say('Sorry, I didn’t catch that. Please say it again.', { force: true })
       return
     }
-    if (STOP_WORDS.test(text) && !inConversation(assistantRef.current)) {
-      stop()
+
+    if (STOP_WORDS.test(command) && !conversing()) {
+      await say('Okay.', { force: true })
       return
     }
-    if (voiceHandler.current?.(text)) return
-    const talking = inConversation(assistantRef.current) && assistantRef.current?.status !== 'authorising'
-    if (talking || Date.now() - awaiting.current < 12000) {
-      awaiting.current = 0
-      void runCommand(text)
-    }
+
+    markVoiceNavigation()
+    const job = runCommand(command, true)
+    await say(heardBack(command), { force: true })
+    const m = await job
+    if (m.text || m.speech) await respond(m)
   }
 
-  const stopWakeRec = useCallback(() => {
-    window.clearTimeout(wakeTimer.current)
-    const r = wakeRec.current
-    wakeRec.current = null
-    if (r) {
-      r.onend = null
-      r.onerror = null
-      r.onresult = null
-      try {
-        r.abort()
-      } catch {
-        /* already stopped */
-      }
-    }
+  cycleRef.current = async () => {
+    if (turnRef.current) return
+    const mode = modeNow()
+    setWakeActive(mode === 'wake')
+    if (mode === 'off') return
+    const turn = hearOnce(mode === 'reply' ? 9000 : 25000)
+    turnRef.current = turn
+    listeningRef.current = mode === 'reply'
+    setListening(mode === 'reply')
+    const h = await turn.result
+    if (turnRef.current === turn) turnRef.current = null
+    listeningRef.current = false
+    setListening(false)
     setWakeActive(false)
-  }, [])
-
-  const startWakeRec = useCallback(async () => {
-    const Rec = getRec()
-    if (!Rec || !wakeOn.current || wakePaused.current || wakeRec.current) return
-    const granted = micRef.current === 'granted' || (await micPermission()) === 'granted'
-    if (!granted || !wakeOn.current || wakePaused.current || wakeRec.current) return
-    const rec = new Rec()
-    rec.lang = 'en-NG'
-    rec.continuous = true
-    rec.interimResults = false
-    rec.maxAlternatives = 1
-    rec.onresult = (e) => {
-      for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
-        const result = e.results[i]
-        if (result.isFinal === false) continue
-        onHeard.current(result[0].transcript)
+    if (h.error === 'aborted') return
+    if (h.error === 'denied') {
+      setMic('denied')
+      return
+    }
+    if (h.error === 'unsupported') return
+    if (!h.text) {
+      if (h.error === 'failed') {
+        await say('Sorry, I missed that. Please say it again.', { force: true })
+        return
       }
-    }
-    rec.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        setMic('denied')
-        wakeOn.current = false
-        stopWakeRec()
+      if (mode === 'reply' && conversing() && !nudged.current) {
+        nudged.current = true
+        await say('I’m still listening. Say your answer, or say cancel.', { force: true })
+        return
       }
+      if (mode === 'reply') awaitUntil.current = 0
+      kick(300)
+      return
     }
-    // The browser ends continuous recognition every so often: start it again straight away.
-    rec.onend = () => {
-      wakeRec.current = null
-      setWakeActive(false)
-      if (wakeOn.current && !wakePaused.current) wakeTimer.current = window.setTimeout(() => void startWakeRec(), 250)
-    }
-    wakeRec.current = rec
+    nudged.current = false
+    busy.current = true
     try {
-      rec.start()
-      setWakeActive(true)
-    } catch {
-      wakeRec.current = null
-      wakeTimer.current = window.setTimeout(() => void startWakeRec(), 1000)
+      await handle(h.text, mode)
+    } finally {
+      busy.current = false
     }
-  }, [stopWakeRec])
-
-  pauseWake.current = () => {
-    wakePaused.current = true
-    stopWakeRec()
-  }
-  resumeWake.current = () => {
-    wakePaused.current = false
-    if (wakeOn.current) wakeTimer.current = window.setTimeout(() => void startWakeRec(), 300)
+    kick(300)
   }
 
   useEffect(() => {
-    wakeOn.current = settings.wakeWord && canListen && mic !== 'denied'
-    if (wakeOn.current) void startWakeRec()
-    else stopWakeRec()
-    return () => {
-      wakeOn.current = false
-      stopWakeRec()
-    }
-  }, [settings.wakeWord, canListen, mic, startWakeRec, stopWakeRec])
+    handsFree.current = settings.wakeWord && canListen && mic !== 'denied'
+    kick(500)
+  }, [settings.wakeWord, canListen, mic, kick])
 
-  // Any touch or key press means the user has moved on: stop talking.
+  useEffect(
+    () => () => {
+      window.clearTimeout(kickTimer.current)
+      endTurn()
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+
+  // A touch or key press stops Echo talking. The first one also lets the browser use sound and the microphone.
   useEffect(() => {
     const interrupt = () => {
+      if (!unlocked.current) {
+        unlocked.current = true
+        wakeAudio()
+        kick(600)
+      }
       if (speakingRef.current) stop()
     }
     window.addEventListener('pointerdown', interrupt, true)
@@ -817,26 +786,26 @@ export function EchoProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('pointerdown', interrupt, true)
       window.removeEventListener('keydown', interrupt, true)
     }
-  }, [stop])
+  }, [stop, kick])
 
   const startListening = useCallback(() => {
+    unlocked.current = true
+    wakeAudio()
     stop()
-    if (wakeRec.current) {
-      awaiting.current = Date.now()
-      cue('listen')
-      buzz(30)
-      void say('Yes?', { force: true })
-      return
-    }
-    void (async () => {
-      const r = await listen(8000)
-      if (r.text) await runCommand(r.text)
-    })()
-  }, [stop, cue, buzz, say, listen, runCommand])
+    endTurn()
+    awaitUntil.current = Date.now() + 15000
+    buzz(30)
+    void say('Yes?', { force: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stop, buzz, say])
 
-  const setVoiceHandler = useCallback((handler: ((text: string) => boolean) | null) => {
-    voiceHandler.current = handler
-  }, [])
+  const setVoiceHandler = useCallback(
+    (handler: ((text: string) => boolean) | null) => {
+      voiceHandler.current = handler
+      kick(400)
+    },
+    [kick],
+  )
 
   const value = useMemo<Echo>(
     () => ({
