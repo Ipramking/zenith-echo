@@ -11,6 +11,11 @@ const port = Number(process.env.PORT) || 4000
 
 app.use(cors({ origin: process.env.CLIENT_ORIGIN?.split(',') ?? true }))
 app.use(express.json({ limit: '100kb' }))
+app.use((req, res, next) => {
+  const started = Date.now()
+  res.on('finish', () => console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - started}ms`))
+  next()
+})
 
 app.get('/api/health', (req, res) => {
   res.json({

@@ -13,6 +13,7 @@ async function send(body) {
   sessionId = reply.sessionId
   console.log(`YOU:  ${body.text ?? JSON.stringify(body)}`)
   console.log(`ECHO: [${reply.screen} · ${reply.status}] ${reply.message.text}\n`)
+    if (reply.message.sensitive) console.log(`      (no headphones: "${reply.message.privateSpeech}")\n`)
   return reply
 }
 
@@ -49,6 +50,8 @@ const conversations = {
   contact: ['send money to my mechanic', '20000', 'for brake pads', 'yes'],
   electricity: ['pay my light bill', 'ikeja', '4501 2345 678', '500', '5000 naira', 'yes'],
   large: ['send money to daniel', '60000', 'skip', 'yes'],
+    pidgin: ['abeg I wan send money give my mechanic', '5k', 'no need', 'oya'],
+  yoruba: ['mo fe fi owo ranse', '2082146805', 'zenith', '3k', 'skip', 'beeni'],
   balance: ["what's my balance", 'read my last transactions'],
 }
 
